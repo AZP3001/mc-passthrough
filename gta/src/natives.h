@@ -128,6 +128,8 @@ namespace natives
 	inline BOOL IsPedShooting(Ped p) { return invoke<BOOL>(0x34616828CD07F1A1, p); }
 	inline BOOL GetPedLastWeaponImpactCoord(Ped p, Vector3 *at) { return invoke<BOOL>(0x6C4D0409BA1A2BC2, p, at); }
 	inline int GetWeaponDamageType(Hash w) { return invoke<int>(0x3BE0BB12D25FB305, w); }
+	inline BOOL IsObjectAPickup(Object o) { return invoke<BOOL>(0xFC481C641EBBD27D, o); }
+	inline BOOL IsObjectAPortablePickup(Object o) { return invoke<BOOL>(0x0378C08504160D0D, o); }
 	inline BOOL GetScreenCoordFromWorldCoord(float x, float y, float z, float *sx, float *sy) { return invoke<BOOL>(0x34E82F05DF2974F5, x, y, z, sx, sy); }
 	inline void DrawRect(float x, float y, float w, float h, int r, int g, int b, int a) { invoke<Void>(0x3A618A217E5154F0, x, y, w, h, r, g, b, a, FALSE); }
 

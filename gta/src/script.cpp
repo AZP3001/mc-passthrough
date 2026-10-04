@@ -366,6 +366,7 @@ namespace
 	bool g_exhausted = false;
 	int g_staminaRestAt = 0;
 	bool g_mcScoping = false;  // Minecraft's player looks through a spyglass (the camera zooms in)
+	bool g_mapLocked = false;  // the minimap turned by our camera (GTA's turns by its own only)
 	bool g_mcTotem = false;    // Minecraft's player holds a totem of undying (it saves GTA's player from dying)
 	bool g_mcBlocking = false; // Minecraft's player holds up a shield (bullets and blows from the front don't hurt)
 	std::string g_mcEffects; // Minecraft's effects on its player: "speed:1,jump_boost:0,..." (effect:amplifier)
@@ -1315,6 +1316,20 @@ namespace
 		at.x = pr.x;
 		at.y = pr.y;
 		at.z = pr.z;
+		if ((pr.kind == "arrow" || pr.kind == "trident") && pr.ux * pr.ux + pr.uy * pr.uy + pr.uz * pr.uz > 0.5f)
+		{
+			// stopped by Minecraft (its stand-in for GTA's walls is a little short of the glass in them): glass just ahead
+			// breaks
+			BOOL hit = FALSE;
+			Vector3 end = {}, normal = {};
+			Entity entity = 0;
+			Hash material = 0;
+			const int probe = natives::StartShapeTestLosProbe(at.x - pr.ux * 0.3f, at.y - pr.uy * 0.3f, at.z - pr.uz * 0.3f,
+				at.x + pr.ux * 1.6f, at.y + pr.uy * 1.6f, at.z + pr.uz * 1.6f, kGlassFlags, ped, kSeeGlass);
+			if (natives::GetShapeTestResultIncludingMaterial(probe, &hit, &end, &normal, &material, &entity) == 2 && hit &&
+				(breakable_glass(material) || (entity != 0 && natives::GetEntityType(entity) == 2 && nearest_window(entity, end.x, end.y, end.z, 0.5f) >= 0)))
+				break_glass(ped, end, pr.ux, pr.uy, pr.uz, entity);
+		}
 		if (pr.kind == "firework")
 		{
 			natives::AddExplosion(at.x, at.y, at.z, 4 /* rocket */, 1.0f, TRUE, FALSE, 0.0f, FALSE);
@@ -1368,21 +1383,7 @@ namespace
 					pr.uy = my / ml;
 					pr.uz = mz / ml;
 				}
-				else if (!pr.done && (pr.kind == "arrow" || pr.kind == "trident") && pr.ux * pr.ux + pr.uy * pr.uy + pr.uz * pr.uz > 0.5f)
-				{
-					// stopped (by Minecraft's stand-in for GTA's walls, a little short of the glass in them): glass just
-					// ahead breaks
-					pr.done = true;
-					BOOL hit = FALSE;
-					Vector3 end = {}, normal = {};
-					Entity entity = 0;
-					Hash material = 0;
-					const int probe = natives::StartShapeTestLosProbe(gx - pr.ux * 0.3f, gy - pr.uy * 0.3f, gz - pr.uz * 0.3f,
-						gx + pr.ux * 1.6f, gy + pr.uy * 1.6f, gz + pr.uz * 1.6f, kGlassFlags, ped, kSeeGlass);
-					if (natives::GetShapeTestResultIncludingMaterial(probe, &hit, &end, &normal, &material, &entity) == 2 && hit &&
-						(breakable_glass(material) || (entity != 0 && natives::GetEntityType(entity) == 2 && nearest_window(entity, end.x, end.y, end.z, 0.5f) >= 0)))
-						break_glass(ped, end, pr.ux, pr.uy, pr.uz, entity);
-				}
+				// (one that stops is gone from Minecraft's list at once: projectile_gone checks for glass just ahead)
 			}
 			pr.x = gx;
 			pr.y = gy;
@@ -2588,7 +2589,12 @@ namespace
 				1 | 2 | 4 | 8 | 16, ped, 7);
 			if (natives::GetShapeTestResult(probe, &hit, &aimedAt, &normal, &aimed) != 2 || !hit || g_doublePeds.count(aimed) ||
 				g_props.handles.count(aimed))
+			{
+				// (one of Minecraft's own blocks isn't a wall here: a body lying in placed blocks can still be hit)
+				if (hit && aimed != 0 && g_props.handles.count(aimed))
+					hit = FALSE;
 				aimed = 0;
+			}
 			if (aimed != 0 && natives::GetEntityType(aimed) == 3)
 			{
 				aimedObject = aimed; // (a loose thing: a lamp post, a sign, a car's bumper or door lying about)
@@ -4467,6 +4473,67 @@ namespace
 	/// Every frame while Minecraft moves the player: GTA's player goes where Minecraft's is (stopped at a wall
 	/// Minecraft didn't know yet), faces where the camera looks and pushes doors in its way open; Minecraft gets GTA's
 	/// collision. Returns the keys for Minecraft (walk_input).
+	/// GTA's pickups (money dropped, weapons, health, armour) where Minecraft's player walks: GTA's frozen player
+	/// doesn't collect them by itself, so it's let go and put on the pickup for a moment, and GTA collects it.
+	void pickups_tick(Ped ped, int now)
+	{
+		static int nextScan = 0, holdUntil = 0, triedSince = 0;
+		static Object target = 0, tried = 0;
+		static std::set<Object> refused; // (not collectable: full ammo, a mission's)
+		if (now >= nextScan)
+		{
+			nextScan = now + 150;
+			target = 0;
+			if (!g_mcSpectator)
+			{
+				float best = 1.8f * 1.8f;
+				int handles[256];
+				const int n = worldGetAllObjects(handles, 256);
+				for (int i = 0; i < n; ++i)
+				{
+					const Object o = handles[i];
+					if (g_props.handles.count(o) || refused.count(o))
+						continue;
+					const Vector3 at = natives::GetEntityCoords(o, TRUE);
+					const float dx = at.x - g_walk.x, dy = at.y - g_walk.y, dz = at.z - g_walk.z;
+					const float d2 = dx * dx + dy * dy;
+					if (d2 < best && dz > -0.8f && dz < 2.0f && (natives::IsObjectAPickup(o) || natives::IsObjectAPortablePickup(o)))
+					{
+						best = d2;
+						target = o;
+					}
+				}
+			}
+		}
+		if (target != tried)
+		{
+			tried = target;
+			triedSince = now;
+		}
+		else if (target != 0 && now - triedSince > 1500)
+		{
+			refused.insert(target);
+			if (refused.size() > 64)
+				refused.clear();
+			target = 0;
+		}
+		if (target != 0 && natives::DoesEntityExist(target))
+		{
+			const Vector3 at = natives::GetEntityCoords(target, TRUE);
+			natives::FreezeEntityPosition(ped, FALSE);
+			natives::SetEntityCoordsNoOffset(ped, at.x, at.y, at.z + 0.9f);
+			holdUntil = now + 250;
+		}
+		else if (holdUntil != 0 && now >= holdUntil)
+		{
+			holdUntil = 0;
+			natives::FreezeEntityPosition(ped, TRUE); // (collected, or gone: frozen again where Minecraft's player is)
+			natives::SetEntityCoordsNoOffset(ped, g_walk.x, g_walk.y, g_walk.z + 1.0f);
+		}
+		else if (holdUntil != 0)
+			natives::SetEntityCoordsNoOffset(ped, g_walk.x, g_walk.y, g_walk.z + 1.0f);
+	}
+
 	int walk_tick(Ped ped, bool screen)
 	{
 		const int now = natives::GetGameTimer();
@@ -4603,6 +4670,7 @@ namespace
 		natives::SetEntityCoordsNoOffset(ped, g_walk.x, g_walk.y, g_walk.z + 1.0f);
 		natives::SetEntityHeading(ped, cam.z);
 		natives::SetPedDiesInWater(ped, FALSE); // (Minecraft swims, and keeps its own breath)
+		pickups_tick(ped, now);
 		if (g_mcSpectator)
 			return in;
 		// a car about to hit: GTA's physics has the player for a moment (only standing on GTA's own ground: on Minecraft's
@@ -6132,6 +6200,11 @@ namespace
 			unhide_player(); // a character switch, or the passthrough off: GTA's player shows again
 		if (!on)
 		{
+			if (g_mapLocked)
+			{
+				natives::UnlockMinimapAngle();
+				g_mapLocked = false;
+			}
 			walk_set(ped, false);
 			walk_cam_end();
 			if (!g_props.live.empty())
@@ -6300,13 +6373,12 @@ namespace
 		const float fov = natives::GetFinalRenderedCamFov();
 		// the minimap turns with the camera that's rendering (GTA's only follows its own gameplay camera)
 		{
-			static bool mapLocked = false;
 			const bool scripted = g_drive.on || g_walkCam.cam != 0;
 			if (scripted)
 				natives::LockMinimapAngle(int(std::fmod(std::fmod(r.z, 360.0f) + 360.0f, 360.0f)));
-			else if (mapLocked)
+			else if (g_mapLocked)
 				natives::UnlockMinimapAngle();
-			mapLocked = scripted;
+			g_mapLocked = scripted;
 		}
 		compositor::set_host_planes(natives::GetFinalRenderedCamNearClip(), natives::GetFinalRenderedCamFarClip());
 		// who Steve stands in for: GTA's player, or in a cutscene its copy of the player's character

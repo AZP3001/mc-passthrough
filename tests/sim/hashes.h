@@ -103,6 +103,8 @@
 #define H_IsPedShooting 0x34616828CD07F1A1ull
 #define H_GetPedLastWeaponImpactCoord 0x6C4D0409BA1A2BC2ull
 #define H_GetWeaponDamageType 0x3BE0BB12D25FB305ull
+#define H_IsObjectAPickup 0xFC481C641EBBD27Dull
+#define H_IsObjectAPortablePickup 0x0378C08504160D0Dull
 #define H_GetScreenCoordFromWorldCoord 0x34E82F05DF2974F5ull
 #define H_DrawRect 0x3A618A217E5154F0ull
 #define H_GetFrameCount 0xFC8202EFC642E6F2ull

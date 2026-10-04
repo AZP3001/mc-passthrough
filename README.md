@@ -207,6 +207,7 @@ Also:
   camera (Minecraft movement).
 - Compasses point to your GTA map waypoint. Hit a parked car and its alarm goes off; heavy blows jolt the screen a bit.
   A fishing rod hooks cars and loose things too. Hurt in GTA, Steve flinches and you hear it.
+- GTA's pickups (dropped money, weapons, health, armour) are collected in Minecraft movement too.
 - Out of breath (empty hunger bar), GTA's own sprint waits too. Water douses a burning car for good.
 
 ## Settings

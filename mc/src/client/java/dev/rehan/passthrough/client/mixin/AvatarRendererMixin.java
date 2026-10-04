@@ -30,16 +30,9 @@ abstract class AvatarRendererMixin {
 			return;
 		}
 
-		// drawn as tall as the host's character (Minecraft's Steve is 1.875 m); in first person (his body shows below
-		// the camera) without his head and what's on it
-		boolean firstPerson = p.firstPerson() && !p.drive() && !minecraft.gameRenderer.mainCamera().isDetached();
-		SteveRig.setLocal(state, p.height() / 1.875F, firstPerson);
-		if (firstPerson) {
-			state.headEquipment = ItemStack.EMPTY;
-			state.headItem.clear();
-			state.wornHeadType = null;
-			state.showCape = false;
-		}
+		// drawn as tall as the host's character (Minecraft's Steve is 1.875 m). (First person: he isn't drawn at all; the
+		// inventory's little Steve is this same player, and must keep his head)
+		SteveRig.setLocal(state, p.height() / 1.875F, false);
 
 		// (not while a screen that draws Steve itself is open, the inventory: its little Steve would take the pose too)
 		SteveRig.Pose rig = p.rig() != null && p.rig().length >= 24 && !p.walk() && !p.drive()
@@ -88,10 +81,6 @@ abstract class AvatarRendererMixin {
 			poseStack.rotate(Axis.XP, rig.leanA());
 		}
 
-		if (SteveRig.firstPerson(state)) {
-			// a little back from the camera, so looking down shows his chest, arms and legs, not the inside of him
-			poseStack.translate(0.0F, 0.0F, 0.22F);
-		}
 	}
 
 	/** The local player as tall as the host's character (after Minecraft's own 0.9375: about his feet). */

@@ -54,6 +54,9 @@ public class PassthroughClient implements ClientModInitializer {
 		"gamerule send_command_feedback false",
 		"gamerule log_admin_commands false",
 		"gamerule keep_inventory true",
+		// (Minecraft's health is the host's: healing in Minecraft heals the host's player too, so only potions, effects and
+		// food count, not Minecraft's own slow regeneration from a full, unseen hunger bar)
+		"gamerule natural_health_regeneration false",
 		"difficulty normal",
 		"gamerule show_advancement_messages false",
 		"gamerule player_movement_check false",
