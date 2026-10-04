@@ -34,7 +34,7 @@ namespace
 {
 	constexpr int kPort = 25599;
 	constexpr int kGroundRadius = 40;        // blocks around the player that get collision
-	constexpr int kGroundProbesPerTick = 160;
+	constexpr int kGroundProbesPerTick = 110;
 	constexpr int kGroundDepth = 2;          // barrier layers under each surface
 	constexpr Hash kWeaponUnarmed = 0xA2719263;
 	// The director's gun op: GTA's own weapons in Steve's hands. Carbine rifle, minigun, RPG.
@@ -90,6 +90,42 @@ namespace
 		bool freeLook = true;
 	} g_settings;
 	int g_spaceDownAt = INT_MAX; // Space held since then (held at a ledge too high to jump, GTA climbs it)
+	// A car flying with Steve (Minecraft's movement on, in the driver's seat, Space twice): Minecraft flies the player
+	// (creative flight) and the car goes where the player is, facing where the camera looks (car_fly_tick)
+	struct CarFly
+	{
+		bool on = false;
+		Vehicle car = 0;
+		float ox = 0, oy = 0, oz = 0; // the car's centre from the player's feet, in the car's frame (right, forward, up)
+		int lastSpace = -100000;
+		int startedAt = 0;
+		int teleportAt = -100000;
+	} g_carFly;
+	bool g_mcSpectator = false;   // Minecraft's player is a spectator (/spectator): GTA's player flies through everything
+	bool g_spectatorOn = false;   // what was last applied to GTA's player for it
+	bool g_mcFlying = false;      // Minecraft's player glides (elytra) or flies: its whole way is checked for GTA's walls
+	// Every Minecraft mob near the player (Minecraft coordinates), for GTA's world to hit (cars, flung people) and burn
+	struct WorldMob
+	{
+		int id;
+		float x, y, z; // GTA coordinates, feet
+		float width, height;
+		bool fire;
+	};
+	std::vector<WorldMob> g_worldMobs;
+	int g_nextWorldMobsAt = 0, g_nextFiresAt = 0;
+	std::string g_firesSent;
+	// Minecraft's animals that live in GTA too (a cow, a pig, a chicken, ...): spawned as GTA's own, queued until the
+	// model is in
+	struct AnimalSpawn
+	{
+		Hash model;
+		int pedType;
+		float x, y, z, heading;
+		int until;
+	};
+	std::vector<AnimalSpawn> g_animalQueue;
+	std::unordered_map<Vehicle, Vector3> g_carVelocity; // last frame's, to see a crash into Minecraft's blocks
 	// GTA's collision near the player, as boxes for Minecraft (GTA coordinates). Floors: a grid of 0.5 m cells probed
 	// from above the standing height. Walls: boxes behind what a fan of rays hits at knee and chest height. Ceilings:
 	// boxes over the head.
@@ -224,9 +260,8 @@ namespace
 		int warpPulseUntil = 0;
 		int64_t last = 0;
 		float t = 0.0f;
-		// GTA's own camera shake is kept (Minecraft follows it through re-projection, measured to ~1 px); the picture
-		// shake is only for testing now ("fx" op)
-		bool screenShake = false, suppress = false;
+		// the picture shakes (GTA and Minecraft as one), and GTA's own camera shake is stopped and turned into that
+		bool screenShake = true, suppress = true;
 		int gtaShakeFrames = 0;                  // frames GTA's own camera shake was found (and stopped)
 	} g_fx;
 	Cam g_aimCam = 0; // while aiming: GTA's aim camera moved out past Steve's (much wider) head
@@ -296,11 +331,18 @@ namespace
 		std::unordered_set<Object> handles;                    // the live props (GTA's probes skip them: Minecraft has the blocks)
 		std::map<std::tuple<int, int, int>, int> turns;        // the way each live prop was turned (prop_turn)
 		std::vector<std::tuple<int, int, int>> pending;
+		// props without collision yet: something of GTA's was there when the block was placed (a solid prop put inside a
+		// car or a person flings it far away: it looked as if the block despawned it)
+		std::set<std::tuple<int, int, int>> ghosts;
+		int nextGhostAt = 0;
 		static constexpr size_t kMax = 400; // GTA crashes (access violation) with ~1500 script objects about
 		static constexpr float kRadius = 30.0f; // blocks within this of the player get one (nearest first)
 		int nextPickAt = 0;
 	} g_props;
 	void props_clear_all();
+	void world_mobs_message(const std::string &m);
+	void animal_message(const std::string &m);
+	void command_message(Ped player, const std::string &m);
 	std::vector<std::pair<int, int>> g_spiral;
 	std::atomic<bool> g_toggle{false};
 	std::atomic<bool> g_relevel{false};
@@ -360,7 +402,10 @@ namespace
 
 	/// Find the ground under columns around the player that haven't been sampled yet (or only from another floor of
 	/// a building), nearest first. Probes start a little above the feet: under any ceiling, so a hallway's ceiling is
-	/// never taken for ground (which put barriers at head height).
+	/// never taken for ground (which put barriers at head height). Under GTA's water the ground is its bed, and the
+	/// water over it goes to Minecraft too (as water nobody sees: Minecraft swims in it). Where something of GTA's stands
+	/// on the ground up to a mob's height (a wall, a fence, a parked bus stop), the column goes up to its top, so
+	/// Minecraft's mobs bump into GTA's walls (the player Minecraft moves has GTA's real collision instead).
 	void sample_ground(const Vector3 &player)
 	{
 		if (g_spiral.empty())
@@ -375,8 +420,9 @@ namespace
 		}
 		const int px = int(std::floor(player.x)), pz = int(std::floor(-player.y));
 		const float feet = player.z - 1.0f;
-		std::string columns;
+		std::string columns, water;
 		int probes = 0;
+		const Ped ped = natives::PlayerPedId();
 		for (const auto &[dx, dz] : g_spiral)
 		{
 			const int x = px + dx, z = pz + dz;
@@ -387,16 +433,35 @@ namespace
 				break;
 			float groundZ = 0.0f;
 			// Minecraft column (x, z) covers GTA x in [x, x+1) and y in (-z-1, -z]: probe its centre
-			if (!natives::GetGroundZFor3dCoord(x + 0.5f, -(z + 0.5f), feet + 1.2f, &groundZ, FALSE, FALSE) || groundZ == 0.0f)
+			const float cx = x + 0.5f, cy = -(z + 0.5f);
+			if (!natives::GetGroundZFor3dCoord(cx, cy, feet + 1.2f, &groundZ, TRUE, FALSE) || groundZ == 0.0f)
 				continue; // collision not streamed in yet: try again later
 			g_sampled[column_key(x, z)] = feet;
 			const int top = int(std::floor(groundZ + g_yOffset + 0.5f)) - 1;
+			// something standing on the ground here, up to a mob's height (not a car: they drive off)
+			int wallTop = top;
+			{
+				BOOL hit = FALSE;
+				Vector3 at = {}, n = {};
+				Entity e = 0;
+				const int probe = natives::StartShapeTestLosProbe(cx, cy, groundZ + 1.8f, cx, cy, groundZ + 0.45f, 1 | 16, ped, 7);
+				if (natives::GetShapeTestResult(probe, &hit, &at, &n, &e) == 2 && hit && at.z > groundZ + 0.5f && (e == 0 || !g_props.handles.count(e)))
+					wallTop = std::max(top, int(std::floor(at.z + g_yOffset + 0.5f)) - 1);
+			}
 			char entry[64];
-			snprintf(entry, sizeof(entry), "%s%d,%d,%d,%d", columns.empty() ? "" : ",", x, z, top - kGroundDepth + 1, top);
+			snprintf(entry, sizeof(entry), "%s%d,%d,%d,%d", columns.empty() ? "" : ",", x, z, top - kGroundDepth + 1, wallTop);
 			columns += entry;
+			float surface = 0.0f;
+			if (natives::GetWaterHeight(cx, cy, feet + 20.0f, &surface) && surface > groundZ + 0.1f)
+			{
+				snprintf(entry, sizeof(entry), "%s%d,%d,%d,%d", water.empty() ? "" : ",", x, z, top + 1, int((surface + g_yOffset) * 256.0f));
+				water += entry;
+			}
 		}
 		if (!columns.empty())
 			g_ws.send("{\"t\":\"ground\",\"c\":[" + columns + "]}");
+		if (!water.empty())
+			g_ws.send("{\"t\":\"gwater\",\"c\":[" + water + "]}");
 	}
 
 	// Flat JSON objects only (what the director and the mod send), with or without spaces around ':'.
@@ -874,6 +939,13 @@ namespace
 		shake_from(at.x, at.y, at.z, 0.25f);
 	}
 
+	/// A level in a projectile's "sub" ("pw3:pu1:fl"): the digits after `key`, or 0.
+	int sub_level(const std::string &sub, const char *key)
+	{
+		const size_t at = sub.find(key);
+		return at == std::string::npos ? 0 : std::atoi(sub.c_str() + at + std::strlen(key));
+	}
+
 	/// A Minecraft projectile went from (ax..) to (bx..) this tick (GTA coordinates): if that crosses anything of GTA's,
 	/// it acts there (a firework blows up, an arrow or trident lands a bullet in a person or car or sticks in a wall,
 	/// a potion splashes, a wind charge bursts, ...), and Minecraft is told where (so it ends there too). GTA glass on
@@ -885,7 +957,8 @@ namespace
 		Entity entity = 0;
 		Hash material = 0;
 		float sx0 = pr.x, sy0 = pr.y, sz0 = pr.z;
-		Entity ignore = ped;
+		// (shot from a car: the car itself isn't in the way)
+		Entity ignore = natives::IsPedInAnyVehicle(ped, FALSE) ? Entity(natives::GetVehiclePedIsIn(ped, FALSE)) : Entity(ped);
 		const float dx = bx - pr.x, dy = by - pr.y, dz = bz - pr.z;
 		const float len = std::max(0.001f, std::sqrt(dx * dx + dy * dy + dz * dz));
 		const float ux = dx / len, uy = dy / len, uz = dz / len;
@@ -926,17 +999,27 @@ namespace
 		bool stick = false;
 		if (pr.kind == "firework")
 		{
-			natives::AddExplosion(end.x, end.y, end.z, 4 /* rocket */, 1.0f, TRUE, FALSE, 0.3f, FALSE);
+			natives::AddExplosion(end.x, end.y, end.z, 4 /* rocket */, 1.0f, TRUE, FALSE, 0.0f, FALSE);
 			shake_from(end.x, end.y, end.z, 0.6f);
 		}
 		else if (pr.kind == "arrow" || pr.kind == "trident")
 		{
 			const bool trident = pr.kind == "trident";
+			// the bow's enchantments: power hurts more, punch knocks people down, flame sets them alight
+			const int power = sub_level(pr.sub, "pw"), punch = sub_level(pr.sub, "pu");
+			const bool flame = pr.sub.find("fl") != std::string::npos;
 			if (type == 1 || type == 2)
 				natives::ShootSingleBulletBetweenCoords(end.x - ux * 1.0f, end.y - uy * 1.0f, end.z - uz * 1.0f,
-					end.x + ux * 0.6f, end.y + uy * 0.6f, end.z + uz * 0.6f, trident ? 450 : 250, kSniper, ped);
+					end.x + ux * 0.6f, end.y + uy * 0.6f, end.z + uz * 0.6f, int((trident ? 450 : 250) * (1.0f + 0.25f * float(power))), kSniper, ped);
 			else
 				stick = true;
+			if (type == 1 && punch > 0)
+			{
+				natives::SetPedToRagdoll(entity, 2500);
+				natives::ApplyForceToEntity(entity, ux * 6.0f * float(punch), uy * 6.0f * float(punch), 2.5f);
+			}
+			if ((type == 1 || type == 2) && flame)
+				natives::StartEntityFire(entity);
 			if (type == 2)
 			{
 				// in a wheel: that tyre goes flat (the bullet alone only did when it happened to hit the rubber)
@@ -949,11 +1032,11 @@ namespace
 				natives::SetPedToRagdoll(entity, 3000);
 				natives::ApplyForceToEntity(entity, ux * 10.0f, uy * 10.0f, 3.0f);
 			}
-			if (trident && pr.sub == "chan")
+			if (trident && pr.sub.find("chan") != std::string::npos)
 			{
 				// channeling: lightning strikes where it lands
 				natives::ForceLightningFlash();
-				natives::AddExplosion(end.x, end.y, end.z, 36 /* railgun */, 1.0f, TRUE, FALSE, 0.5f, FALSE);
+				natives::AddExplosion(end.x, end.y, end.z, 36 /* railgun */, 1.0f, TRUE, FALSE, 0.0f, FALSE);
 				shake_from(end.x, end.y, end.z, 0.7f);
 			}
 		}
@@ -1007,7 +1090,7 @@ namespace
 		at.z = pr.z;
 		if (pr.kind == "firework")
 		{
-			natives::AddExplosion(at.x, at.y, at.z, 4 /* rocket */, 1.0f, TRUE, FALSE, 0.3f, FALSE);
+			natives::AddExplosion(at.x, at.y, at.z, 4 /* rocket */, 1.0f, TRUE, FALSE, 0.0f, FALSE);
 			shake_from(at.x, at.y, at.z, 0.6f);
 		}
 		else if (pr.kind == "potion")
@@ -1580,14 +1663,17 @@ namespace
 		g_fx.t += dt;
 		if (natives::IsGameplayCamShaking() || natives::IsCinematicCamShaking())
 			++g_fx.gtaShakeFrames;
-		// (GTA's explosion shake isn't one these report: Minecraft follows it through re-projection instead)
-		if (g_fx.suppress && (natives::IsGameplayCamShaking() || natives::IsCinematicCamShaking()))
+		// GTA shaking its camera (its own explosions: a grenade, a car going up; a crash) shook only GTA's picture, not
+		// Minecraft's, which came apart from it: the shake goes on the finished picture instead, both together
+		const Vector3 cc = natives::GetFinalRenderedCamCoord();
+		const bool boom = natives::IsExplosionInSphere(-1, cc.x, cc.y, cc.z, 60.0f);
+		if (g_fx.suppress && (boom || natives::IsGameplayCamShaking() || natives::IsCinematicCamShaking()))
 		{
 			// GTA shook its camera (an explosion of its own, a crash): Minecraft's frame can't follow, so shake the
 			// picture instead
 			natives::StopGameplayCamShaking(TRUE);
 			natives::StopCinematicCamShaking(TRUE);
-			const Vector3 c = natives::GetFinalRenderedCamCoord();
+			const Vector3 c = cc;
 			const float strength = natives::IsExplosionInSphere(-1, c.x, c.y, c.z, 18.0f) ? 0.9f
 				: natives::IsExplosionInSphere(-1, c.x, c.y, c.z, 50.0f) ? 0.45f : 0.25f;
 			if (g_fx.shake < strength)
@@ -1833,12 +1919,18 @@ namespace
 		const int cars = worldGetAllVehicles(handles, 256);
 		for (int i = 0; i < cars; ++i)
 		{
-			if (!natives::IsEntityOnFire(handles[i]))
-				continue;
 			const Vector3 o = natives::GetEntityCoords(handles[i], TRUE);
+			if ((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) > 80.0f * 80.0f)
+				continue;
 			float fx = 0.0f, fy = 0.0f;
-			if (water_at(o.x, o.y, o.z - 0.6f, fx, fy) || water_at(o.x, o.y, o.z + 0.4f, fx, fy))
+			if (!water_at(o.x, o.y, o.z - 0.6f, fx, fy) && !water_at(o.x, o.y, o.z + 0.4f, fx, fy))
+				continue;
+			if (natives::IsEntityOnFire(handles[i]))
 				natives::StopEntityFire(handles[i]);
+			// carried along where it flows, as Minecraft's water carries a boat
+			const float len = std::sqrt(fx * fx + fy * fy);
+			if (len > 0.1f)
+				natives::ApplyForceToEntity(handles[i], fx / len * 9.0f, fy / len * 9.0f, 0.3f);
 		}
 	}
 
@@ -2061,59 +2153,148 @@ namespace
 	{
 		const char *kind;
 		float reach, cone, damage, ped, pedUp, car, carUp;
-		int ragdoll;
+		int ragdoll;   // ms a hit knocks people down for (0: a shove, as Minecraft's own knockback; a knockback
+		               // enchantment knocks them down all the same)
 		bool windows;
+		float dent, dentRadius; // SET_VEHICLE_DAMAGE where it lands on a car
 	};
 	MeleeStyle g_meleeStyles[] = {
-		{"fist", 2.3f, 0.5f, 25.0f, 3.0f, 1.0f, 0.0f, 0.0f, 700, false},
-		{"tool", 2.8f, 0.4f, 60.0f, 5.0f, 2.0f, 6.0f, 3.0f, 1500, false},
-		{"sword", 4.0f, 0.3f, 400.0f, 12.0f, 6.0f, 25.0f, 12.0f, 4000, true},
-		{"axe", 3.6f, 0.3f, 600.0f, 10.0f, 5.0f, 35.0f, 14.0f, 4000, true},
-		{"trident", 4.2f, 0.3f, 500.0f, 13.0f, 6.0f, 28.0f, 12.0f, 4000, true},
-		{"spear", 6.0f, 0.75f, 380.0f, 18.0f, 4.0f, 22.0f, 6.0f, 3500, true},
-		{"mace", 3.2f, 0.2f, 450.0f, 14.0f, 9.0f, 40.0f, 18.0f, 4500, true},
+		{"fist", 2.3f, 0.5f, 25.0f, 3.0f, 1.0f, 0.0f, 0.0f, 700, false, 120.0f, 0.35f},
+		{"tool", 2.8f, 0.4f, 60.0f, 5.0f, 2.0f, 6.0f, 3.0f, 1500, false, 200.0f, 0.4f},
+		// the sword: Minecraft's sword, a shove (a fifth harder than before), no knocking down without knockback
+		{"sword", 4.0f, 0.3f, 400.0f, 14.4f, 7.2f, 30.0f, 14.4f, 0, true, 300.0f, 0.5f},
+		{"axe", 3.6f, 0.3f, 600.0f, 10.0f, 5.0f, 35.0f, 14.0f, 4000, true, 650.0f, 0.65f},
+		{"trident", 4.2f, 0.3f, 500.0f, 13.0f, 6.0f, 28.0f, 12.0f, 4000, true, 350.0f, 0.5f},
+		{"spear", 6.0f, 0.75f, 380.0f, 18.0f, 4.0f, 22.0f, 6.0f, 3500, true, 300.0f, 0.45f},
+		{"mace", 3.2f, 0.2f, 450.0f, 14.0f, 9.0f, 40.0f, 18.0f, 4500, true, 800.0f, 0.8f},
+	};
+	constexpr float kMeleeRange = 8.0f; // what the crosshair is on is hit this far off (Minecraft's reach is 8 too)
+
+	/// The enchantments on what Steve swings or shoots with (Minecraft says): knockback, sharpness, fire aspect, looting;
+	/// for arrows power, punch, flame.
+	struct Enchants
+	{
+		int knockback = 0, sharpness = 0, fire = 0, looting = 0, power = 0, punch = 0;
 	};
 
+	/// A dent where a swing (or anything) lands on car `v` at `at` (world), deeper for harder hits.
+	void dent_vehicle(Vehicle v, const Vector3 &at, float damage, float radius)
+	{
+		const Vector3 local = natives::GetOffsetFromEntityGivenWorldCoords(v, at.x, at.y, at.z);
+		natives::SetVehicleDamage(v, local.x, local.y, local.z, damage, radius, TRUE);
+	}
+
+	/// Where on car `v` a swing from (x, y, z) lands: the nearest point of its body toward its middle (or the point
+	/// itself if nothing is in the way).
+	Vector3 vehicle_hit_point(Ped ped, Vehicle v, float x, float y, float z)
+	{
+		const Vector3 c = natives::GetEntityCoords(v, TRUE);
+		BOOL hit = FALSE;
+		Vector3 end = {}, normal = {};
+		Entity e = 0;
+		const int probe = natives::StartShapeTestLosProbe(x, y, z, c.x, c.y, c.z, 2, ped, 7);
+		if (natives::GetShapeTestResult(probe, &hit, &end, &normal, &e) == 2 && hit && e == v)
+			return end;
+		return c;
+	}
+
 	/// A swing in Minecraft (`kind`: fist, tool, sword, axe, trident, spear, mace; `strength` 0..1 from Minecraft's
-	/// attack cooldown): everyone in front of Steve goes flying, cars within reach get shoved and a window smashed (all
+	/// attack cooldown; the weapon's enchantments): everyone in front of Steve (and whoever the crosshair is on, up to
+	/// 8 m off) is hit: hurt, shoved or knocked down, set alight by fire aspect, carrying more money with looting; the
+	/// dead are shoved about too. Cars within reach get a dent where the swing lands, a shove and a window smashed (all
 	/// of them by a weapon), and glass in reach shatters, even to a fist. A mace swung while falling is a smash all
 	/// round, and bounces the player.
-	void melee(Ped ped, const std::string &kind, float strength)
+	void melee(Ped ped, const std::string &kind, float strength, const Enchants &en)
 	{
 		const MeleeStyle *style = &g_meleeStyles[2];
 		for (const MeleeStyle &s : g_meleeStyles)
 			if (kind == s.kind)
 				style = &s;
 		const float s = std::clamp(strength, 0.0f, 1.0f);
-		const float hurt = 0.2f + 0.8f * s * s, push = std::max(0.3f, s);
+		const float hurt = (0.2f + 0.8f * s * s) * (1.0f + 0.25f * float(en.sharpness)), push = std::max(0.3f, s);
+		const float knock = 1.0f + 0.8f * float(en.knockback);
 		const Vector3 me = natives::GetEntityCoords(ped, TRUE);
 		const Vector3 cam = natives::GetFinalRenderedCamRot(2); // (Minecraft's free look renders with a camera of its own)
+		const Vector3 eye = natives::GetFinalRenderedCamCoord();
 		const float h = cam.z * 3.14159265f / 180.0f, pt = cam.x * 3.14159265f / 180.0f;
 		const float fx = -std::sin(h), fy = std::cos(h);
+		const float ux = fx * std::cos(pt), uy = fy * std::cos(pt), uz = std::sin(pt);
 		const bool smash = kind == "mace" && natives::GetEntityVelocity(ped).z < -4.0f;
 		const float reach = smash ? 6.0f : style->reach, cone = smash ? -1.0f : style->cone;
-		each_ped_near(ped, me.x, me.y, me.z, reach + 1.0f, [&](Ped q, float dx, float dy, float) {
-			const float d = std::sqrt(dx * dx + dy * dy);
-			const Vector3 o = natives::GetEntityCoords(q, TRUE);
-			if (d > reach || std::fabs(o.z - me.z) > 2.5f || (d > 0.3f && (dx * fx + dy * fy) / d < cone))
+		// what the crosshair is on, from beside Steve up to 8 m on (a person, a body, a car)
+		const float along = std::max(0.0f, (me.x - eye.x) * ux + (me.y - eye.y) * uy + (me.z + 0.5f - eye.z) * uz);
+		const float ax = eye.x + ux * along, ay = eye.y + uy * along, az = eye.z + uz * along;
+		Entity aimed = 0;
+		Vector3 aimedAt = {};
+		{
+			BOOL hit = FALSE;
+			Vector3 normal = {};
+			const int probe = natives::StartShapeTestLosProbe(ax, ay, az, ax + ux * kMeleeRange, ay + uy * kMeleeRange, az + uz * kMeleeRange,
+				1 | 2 | 4 | 8 | 16, ped, 7);
+			if (natives::GetShapeTestResult(probe, &hit, &aimedAt, &normal, &aimed) != 2 || !hit || g_doublePeds.count(aimed) ||
+				g_props.handles.count(aimed) || (aimed != 0 && natives::GetEntityType(aimed) == 3))
+				aimed = 0;
+		}
+		auto hitPed = [&](Ped q, float dx, float dy, float d) {
+			if (natives::IsPedDeadOrDying(q) || natives::IsPedFatallyInjured(q))
+			{
+				// a body: shoved along, however it lies (in the ground blocks or not)
+				natives::ApplyForceToEntity(q, fx * 9.0f * push * knock, fy * 9.0f * push * knock, 3.0f * push);
 				return;
-			natives::SetPedToRagdoll(q, style->ragdoll);
+			}
+			if (en.looting > 0)
+				natives::SetPedMoney(q, 40 * (1 + 2 * en.looting)); // (dropped when they die)
 			natives::ApplyDamageToPed(q, std::max(1, int(style->damage * hurt * (smash ? 2.0f : 1.0f))));
+			if (en.fire > 0)
+				natives::StartEntityFire(q);
 			if (smash)
 			{
 				const float n = std::max(d, 0.3f);
+				natives::SetPedToRagdoll(q, style->ragdoll);
 				natives::ApplyForceToEntity(q, dx / n * 8.0f, dy / n * 8.0f, 16.0f);
 			}
+			else if (style->ragdoll > 0 || en.knockback > 0)
+			{
+				natives::SetPedToRagdoll(q, std::max(style->ragdoll, 2500));
+				natives::ApplyForceToEntity(q, fx * style->ped * push * knock, fy * style->ped * push * knock, style->pedUp * push * knock);
+			}
 			else
-				natives::ApplyForceToEntity(q, fx * style->ped * push, fy * style->ped * push, style->pedUp * push);
-		});
-		each_vehicle_near(me.x, me.y, me.z, reach + 2.5f, [&](Vehicle v, float dx, float dy, float) {
-			const float d = std::sqrt(dx * dx + dy * dy);
-			const Vector3 o = natives::GetEntityCoords(v, TRUE);
-			if (d > reach + 1.5f || std::fabs(o.z - me.z) > 3.0f || (d > 0.5f && (dx * fx + dy * fy) / d < std::min(cone, 0.2f)))
-				return;
+			{
+				// Minecraft's knockback: a shove back and a little up, on their feet
+				const Vector3 v = natives::GetEntityVelocity(q);
+				const float k = style->ped / 12.0f * 3.0f * push;
+				natives::SetEntityVelocity(q, v.x + fx * k, v.y + fy * k, v.z + style->pedUp / 6.0f * 1.6f * push);
+			}
+		};
+		std::set<Entity> done;
+		int handles[256];
+		const int n = worldGetAllPeds(handles, 256);
+		for (int i = 0; i < n; ++i)
+		{
+			const Ped q = handles[i];
+			if (q == ped || g_doublePeds.count(q))
+				continue;
+			const Vector3 o = natives::GetEntityCoords(q, TRUE);
+			const float dx = o.x - me.x, dy = o.y - me.y, d = std::sqrt(dx * dx + dy * dy);
+			if (d > reach || std::fabs(o.z - me.z) > 2.5f || (d > 0.3f && (dx * fx + dy * fy) / d < cone))
+				continue;
+			hitPed(q, dx, dy, d);
+			done.insert(q);
+		}
+		if (aimed != 0 && !done.count(aimed) && natives::GetEntityType(aimed) == 1)
+		{
+			const Vector3 o = natives::GetEntityCoords(aimed, TRUE);
+			const float dx = o.x - me.x, dy = o.y - me.y;
+			hitPed(Ped(aimed), dx, dy, std::sqrt(dx * dx + dy * dy));
+			done.insert(aimed);
+		}
+		auto hitCar = [&](Vehicle v, const Vector3 &at) {
 			if (style->car > 0.0f)
-				natives::ApplyForceToEntity(v, fx * style->car * push, fy * style->car * push, style->carUp * push * (smash ? 2.0f : 1.0f));
+				natives::ApplyForceToEntity(v, fx * style->car * push * knock, fy * style->car * push * knock, style->carUp * push * (smash ? 2.0f : 1.0f));
+			// a dent where it lands: a fist a little one, an axe a deep one
+			dent_vehicle(v, at, style->dent * (0.4f + 0.6f * s) * (1.0f + 0.25f * float(en.sharpness)) * (smash ? 2.0f : 1.0f), style->dentRadius);
+			if (en.fire > 0 && s > 0.9f)
+				natives::StartEntityFire(v);
 			if (style->windows)
 				for (int w = 0; w < 8; ++w)
 					natives::SmashVehicleWindow(v, w);
@@ -2124,13 +2305,20 @@ namespace
 				if (w >= 0)
 					natives::SmashVehicleWindow(v, w);
 			}
+		};
+		each_vehicle_near(me.x, me.y, me.z, reach + 2.5f, [&](Vehicle v, float dx, float dy, float) {
+			const float d = std::sqrt(dx * dx + dy * dy);
+			const Vector3 o = natives::GetEntityCoords(v, TRUE);
+			if (d > reach + 1.5f || std::fabs(o.z - me.z) > 3.0f || (d > 0.5f && (dx * fx + dy * fy) / d < std::min(cone, 0.2f)))
+				return;
+			hitCar(v, aimed == v ? aimedAt : vehicle_hit_point(ped, v, me.x, me.y, me.z + 0.3f));
+			done.insert(v);
 		});
+		if (aimed != 0 && !done.count(aimed) && natives::GetEntityType(aimed) == 2)
+			hitCar(Vehicle(aimed), aimedAt);
 		{
 			// glass in reach along the crosshair's line, from beside Steve (shop windows, a car's windscreen): shattered
-			const Vector3 eye = natives::GetFinalRenderedCamCoord();
-			const float ux = fx * std::cos(pt), uy = fy * std::cos(pt), uz = std::sin(pt);
-			const float along = std::max(0.0f, (me.x - eye.x) * ux + (me.y - eye.y) * uy + (me.z + 0.5f - eye.z) * uz);
-			const float ax = eye.x + ux * along, ay = eye.y + uy * along, az = eye.z + uz * along, span = style->reach + 0.5f;
+			const float span = style->reach + 0.5f;
 			BOOL hit = FALSE;
 			Vector3 end = {}, normal = {};
 			Entity entity = 0;
@@ -2212,7 +2400,10 @@ namespace
 			natives::SetOverrideWeather(w.c_str());
 		}
 		else if (op == "explode")
-			natives::AddExplosion(x, y, z, int(json_num(m, "type", 2)), float(json_num(m, "scale", 1.0)), TRUE, FALSE, 1.0f, FALSE);
+		{
+			natives::AddExplosion(x, y, z, int(json_num(m, "type", 2)), float(json_num(m, "scale", 1.0)), TRUE, FALSE, 0.0f, FALSE);
+			shake_from(x, y, z, 0.9f);
+		}
 		else if (op == "ped" || op == "car")
 		{
 			const std::string model = json_str(m, "model");
@@ -2587,10 +2778,105 @@ namespace
 		}
 	}
 
+	/// Whether a car or a person (the player too) is in block `key`'s space.
+	bool block_occupied(const std::tuple<int, int, int> &key)
+	{
+		const auto [bx, by, bz] = key;
+		const float cx = bx + 0.5f, cy = -(bz + 0.5f), cz = by - g_yOffset + 0.5f;
+		bool busy = false;
+		each_vehicle_near(cx, cy, cz, 8.0f, [&](Vehicle v, float, float, float) {
+			if (busy)
+				return;
+			Vector3 mn = {}, mx = {};
+			natives::GetModelDimensions(natives::GetEntityModel(v), &mn, &mx);
+			const Vector3 l = natives::GetOffsetFromEntityGivenWorldCoords(v, cx, cy, cz);
+			busy = l.x > mn.x - 0.55f && l.x < mx.x + 0.55f && l.y > mn.y - 0.55f && l.y < mx.y + 0.55f && l.z > mn.z - 0.55f && l.z < mx.z + 0.55f;
+		});
+		if (busy)
+			return true;
+		int handles[256];
+		const int n = worldGetAllPeds(handles, 256);
+		for (int i = 0; i < n && !busy; ++i)
+		{
+			const Vector3 o = natives::GetEntityCoords(handles[i], TRUE);
+			busy = std::fabs(o.x - cx) < 0.85f && std::fabs(o.y - cy) < 0.85f && o.z - 0.95f < cz + 0.5f && o.z + 0.8f > cz - 0.5f;
+		}
+		return busy;
+	}
+
+	/// Props waiting for their space to clear get their collision once it has.
+	void props_ghosts_tick()
+	{
+		const int now = natives::GetGameTimer();
+		if (g_props.ghosts.empty() || now < g_props.nextGhostAt)
+			return;
+		g_props.nextGhostAt = now + 250;
+		for (auto it = g_props.ghosts.begin(); it != g_props.ghosts.end();)
+		{
+			const auto live = g_props.live.find(*it);
+			if (live == g_props.live.end())
+				it = g_props.ghosts.erase(it);
+			else if (!block_occupied(*it))
+			{
+				natives::SetEntityCollision(live->second, TRUE, TRUE);
+				it = g_props.ghosts.erase(it);
+			}
+			else
+				++it;
+		}
+	}
+
+	/// Cars that crash into Minecraft's blocks (their props) dent three times as deep as GTA's own crash: GTA's own
+	/// dent, and twice that again where the car hit, by how much speed the crash took off it.
+	void crash_tick(Ped player)
+	{
+		if (g_props.live.empty())
+		{
+			g_carVelocity.clear();
+			return;
+		}
+		const Vector3 me = natives::GetEntityCoords(player, TRUE);
+		std::unordered_map<Vehicle, Vector3> next;
+		each_vehicle_near(me.x, me.y, me.z, 60.0f, [&](Vehicle v, float, float, float) {
+			const Vector3 vel = natives::GetEntityVelocity(v);
+			next[v] = vel;
+			const auto it = g_carVelocity.find(v);
+			if (it == g_carVelocity.end())
+				return;
+			const Vector3 pv = it->second;
+			const float before = std::sqrt(pv.x * pv.x + pv.y * pv.y + pv.z * pv.z), after = std::sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+			if (before - after < 4.0f || before < 0.1f)
+				return;
+			// the block it ran into: the nearest one ahead of where it was going
+			const Vector3 c = natives::GetEntityCoords(v, TRUE);
+			float best = 5.0f * 5.0f;
+			Vector3 at = {};
+			bool found = false;
+			for (const auto &[key, obj] : g_props.live)
+			{
+				const auto [bx, by, bz] = key;
+				const float x = bx + 0.5f - c.x, y = -(bz + 0.5f) - c.y, z = by - g_yOffset + 0.5f - c.z, d2 = x * x + y * y + z * z;
+				if (d2 < best && x * pv.x + y * pv.y + z * pv.z > 0.0f)
+				{
+					best = d2;
+					const float d = std::sqrt(d2);
+					at.x = c.x + x - x / d * 0.5f; // the block's face toward the car
+					at.y = c.y + y - y / d * 0.5f;
+					at.z = c.z + z - z / d * 0.5f;
+					found = true;
+				}
+			}
+			if (found)
+				dent_vehicle(v, at, (before - after) * 80.0f, 1.2f);
+		});
+		g_carVelocity = std::move(next);
+	}
+
 	/// Spawn a few queued props per frame (the model has to be streamed in first).
 	void props_tick(const Vector3 &me)
 	{
 		props_pick(me);
+		props_ghosts_tick();
 		if (g_props.pending.empty() || !props_model_ready())
 			return;
 		// (Minecraft block (x,y,z) spans GTA x..x+1, -z-1..-z, y-yOffset..+1)
@@ -2611,7 +2897,13 @@ namespace
 			g_props.turns[key] = turn;
 			natives::SetEntityCanBeDamaged(o, FALSE);
 			natives::SetDisableFragDamage(o, TRUE);
-			natives::SetEntityCollision(o, TRUE, TRUE);
+			if (block_occupied(key))
+			{
+				natives::SetEntityCollision(o, FALSE, FALSE); // until its space is clear (props_ghosts_tick)
+				g_props.ghosts.insert(key);
+			}
+			else
+				natives::SetEntityCollision(o, TRUE, TRUE);
 			natives::SetEntityLodDist(o, 200);
 			if (!g_props.visible)
 				natives::SetEntityVisible(o, FALSE, FALSE);
@@ -2678,12 +2970,15 @@ namespace
 		if (type == "mcpos")
 		{
 			// while Minecraft moves the player: only once it does, and has the last place GTA put it at
-			if (g_walk.on && (json_num(message, "w", 0.0) == 0.0 || int(json_num(message, "ps", -1.0)) != g_walk.psetId))
+			const bool mcMoves = g_walk.on || g_carFly.on;
+			if (mcMoves && (json_num(message, "w", 0.0) == 0.0 || int(json_num(message, "ps", -1.0)) != g_walk.psetId))
 				return;
-			if (g_walk.on)
+			if (mcMoves)
 			{
 				g_walk.acked = true;
 				g_walk.ground = json_num(message, "g", 1.0) != 0.0;
+				const char *fly = json_value(message, "fly");
+				g_mcFlying = fly != nullptr && std::strncmp(fly, "true", 4) == 0;
 			}
 			const char *pos = json_value(message, "pos");
 			const char *vel = json_value(message, "vel");
@@ -2707,8 +3002,13 @@ namespace
 		}
 		if (type == "melee")
 		{
+			Enchants en;
+			en.knockback = int(json_num(message, "kb", 0.0));
+			en.sharpness = int(json_num(message, "sh", 0.0));
+			en.fire = int(json_num(message, "fa", 0.0));
+			en.looting = int(json_num(message, "lo", 0.0));
 			if (!g_noInput)
-				melee(natives::PlayerPedId(), json_str(message, "k"), float(json_num(message, "s", 1.0)));
+				melee(natives::PlayerPedId(), json_str(message, "k"), float(json_num(message, "s", 1.0)), en);
 			return;
 		}
 		if (type == "mobs")
@@ -2767,10 +3067,35 @@ namespace
 				mobhit_message(natives::PlayerPedId(), message);
 			return;
 		}
+		if (type == "allmobs")
+		{
+			world_mobs_message(message);
+			return;
+		}
+		if (type == "animal")
+		{
+			animal_message(message);
+			return;
+		}
+		if (type == "gtacmd")
+		{
+			command_message(natives::PlayerPedId(), message);
+			return;
+		}
+		if (type == "pdmg")
+		{
+			// Minecraft's player was hurt (survival): GTA's player takes it, in hearts of its own health
+			const Ped me = natives::PlayerPedId();
+			const int max = natives::GetEntityMaxHealth(me) - 100;
+			if (!g_godMode && max > 0 && !g_noInput)
+				natives::ApplyDamageToPed(me, std::max(1, int(json_num(message, "d", 0.0) * max / 20.0)));
+			return;
+		}
 		if (type == "pstate")
 		{
-			// what Minecraft's player wears: the elytra
+			// what Minecraft's player wears (the elytra), and whether it's a spectator
 			g_mcElytra = json_num(message, "ely", 0.0) != 0.0;
+			g_mcSpectator = json_num(message, "spec", 0.0) != 0.0;
 			return;
 		}
 		if (type == "pteleport")
@@ -2785,7 +3110,18 @@ namespace
 			const char *pos = json_value(message, "pos");
 			double x, y, z;
 			if (pos && sscanf_s(pos, "[%lf ,%lf ,%lf ]", &x, &y, &z) == 3)
-				natives::SetEntityCoordsNoOffset(natives::PlayerPedId(), float(x), float(-z), float(y - g_yOffset + 1.0));
+			{
+				const Ped me = natives::PlayerPedId();
+				if (natives::IsPedInAnyVehicle(me, FALSE))
+				{
+					// thrown from a car: the car goes there, with the player in it
+					const Vehicle car = natives::GetVehiclePedIsIn(me, FALSE);
+					natives::SetEntityCoordsNoOffset(car, float(x), float(-z), float(y - g_yOffset + 1.0));
+					g_carFly.teleportAt = natives::GetGameTimer();
+				}
+				else
+					natives::SetEntityCoordsNoOffset(me, float(x), float(-z), float(y - g_yOffset + 1.0));
+			}
 			return;
 		}
 		if (type != "explosion" || g_noInput)
@@ -2800,13 +3136,13 @@ namespace
 		if (src == "fireball" || src == "wither_skull" || src == "dragon_fireball")
 		{
 			// a ghast's fireball: a rocket's blast and burning fuel
-			natives::AddExplosion(float(x), float(-z), float(y - g_yOffset), 4, 1.0f, TRUE, FALSE, 0.6f, FALSE);
+			natives::AddExplosion(float(x), float(-z), float(y - g_yOffset), 4, 1.0f, TRUE, FALSE, 0.0f, FALSE);
 			natives::AddExplosion(float(x), float(-z), float(y - g_yOffset), 3, 1.0f, TRUE, FALSE, 0.0f, FALSE);
 			shake_from(float(x), float(-z), float(y - g_yOffset), 0.8f);
 			return;
 		}
 		// TNT (radius 4) as a sticky bomb, smaller blasts (creepers are 3) as grenades.
-		natives::AddExplosion(float(x), float(-z), float(y - g_yOffset), radius >= 3.5 ? 2 : 0, 1.0f, TRUE, FALSE, 1.0f, FALSE);
+		natives::AddExplosion(float(x), float(-z), float(y - g_yOffset), radius >= 3.5 ? 2 : 0, 1.0f, TRUE, FALSE, 0.0f, FALSE);
 		shake_from(float(x), float(-z), float(y - g_yOffset), radius >= 3.5 ? 1.1f : 0.8f);
 	}
 
@@ -3367,23 +3703,42 @@ namespace
 	/// Whether Minecraft should move the player now: on foot, in control, and none of what GTA does itself.
 	bool walk_wanted(Ped ped)
 	{
-		if (!g_mcMove || g_gtaHands || g_drive.on || natives::GetGameTimer() < g_walk.gtaUntil)
+		if (!g_mcMove || g_gtaHands || g_drive.on || g_carFly.on || natives::GetGameTimer() < g_walk.gtaUntil)
 			return false;
 		if (!natives::IsPlayerControlOn(natives::PlayerId()) || !natives::IsPedOnFoot(ped) || natives::IsPedInAnyVehicle(ped, FALSE) ||
 			natives::IsPedGettingIntoAVehicle(ped))
 			return false;
-		if (natives::IsPedRagdoll(ped) || natives::IsPedGettingUp(ped) || natives::IsPedClimbing(ped) || natives::IsPedSwimming(ped) ||
-			natives::IsPedInCover(ped) || natives::GetPedParachuteState(ped) > 0 || natives::IsPedInParachuteFreeFall(ped))
+		if (g_mcSpectator)
+			return true; // a spectator flies through everything, whatever GTA's player was doing
+		if (natives::IsPedRagdoll(ped) || natives::IsPedGettingUp(ped) || natives::IsPedClimbing(ped) || natives::IsPedInCover(ped) ||
+			natives::GetPedParachuteState(ped) > 0 || natives::IsPedInParachuteFreeFall(ped))
 			return false;
 		// a ladder, getting out of a car, a vault, getting in, cover
 		for (const int task : {1, 2, 47, 48, 50, 160, 287, 421})
 			if (natives::GetIsTaskActive(ped, task))
 				return false;
-		// GTA's water deeper than wading (the sea, lakes, pools): GTA's player swims
-		const Vector3 p = natives::GetEntityCoords(ped, TRUE);
-		const float feet = p.z - 1.0f;
-		float water = 0.0f;
-		return !(natives::GetWaterHeight(p.x, p.y, feet + 2.0f, &water) && water > feet + 1.0f);
+		// (GTA's water is Minecraft's too now: Minecraft swims in it, as in its own)
+		return true;
+	}
+
+	/// Minecraft's player became a spectator (/spectator) or stopped being one (/creative): GTA's player flies through
+	/// everything with it, unseen, untouchable and ignored by everyone; or back to GTA's rules.
+	void spectator_apply(Ped ped)
+	{
+		if (g_mcSpectator == g_spectatorOn)
+			return;
+		g_spectatorOn = g_mcSpectator;
+		const Player player = natives::PlayerId();
+		natives::SetEntityCollision(ped, g_mcSpectator ? FALSE : TRUE, TRUE);
+		natives::SetEveryoneIgnorePlayer(player, g_mcSpectator ? TRUE : FALSE);
+		natives::SetPoliceIgnorePlayer(player, g_mcSpectator ? TRUE : FALSE);
+		if (g_mcSpectator)
+		{
+			natives::SetEntityInvincible(ped, TRUE);
+			natives::Notify("Spectator: fly through everything (~y~Space~s~ up, ~y~Ctrl~s~ down). ~y~/creative~s~ to come back");
+		}
+		else
+			apply_rules(ped);
 	}
 
 	/// The movement keys for Minecraft, from GTA's own controls (a pad works too); GTA's player doesn't get them.
@@ -3537,13 +3892,46 @@ namespace
 			// wall Minecraft stopped it at, GTA's side would see it go through and pull it back)
 			const float dt = std::clamp(float(now_nanos() - g_drive.posNanos) * 1e-9f, 0.0f, 0.05f);
 			float tx = g_drive.pos.x + g_drive.vel.x * dt, ty = g_drive.pos.y + g_drive.vel.y * dt;
-			const float tz = g_drive.pos.z + g_drive.vel.z * dt;
+			float tz = g_drive.pos.z + g_drive.vel.z * dt;
 			const float jx = tx - g_walk.x, jy = ty - g_walk.y, jz = tz - g_walk.z, jump = std::sqrt(jx * jx + jy * jy + jz * jz);
 			if (jump > 20.0f && now - g_walk.teleportAt > 3000)
 				walk_correct(false); // Minecraft put its player far away by itself (a respawn): back to GTA's
 			else
 			{
-				if (jump < 6.0f && walk_blocked(ped, tx, ty, tz) && now - g_walk.correctedAt > 100)
+				if (g_mcSpectator)
+				{
+					// a spectator goes through walls and floors
+				}
+				else if (g_mcFlying && jump > 0.05f && jump < 40.0f)
+				{
+					// gliding or flying: its whole way is checked (fast, so no going through a building between frames)
+					BOOL hit = FALSE;
+					Vector3 at = {}, n = {};
+					bool blocked = false;
+					const float ux = jx / jump, uy = jy / jump, uz = jz / jump;
+					for (const float hz : {0.3f, 0.9f, 1.6f})
+						if (!blocked && solid_probe(ped, g_walk.x, g_walk.y, g_walk.z + hz, tx + ux * 0.4f, ty + uy * 0.4f, tz + hz + uz * 0.4f, at, n))
+						{
+							blocked = true;
+							const float back = std::sqrt((at.x - g_walk.x) * (at.x - g_walk.x) + (at.y - g_walk.y) * (at.y - g_walk.y) +
+								(at.z - hz - g_walk.z) * (at.z - hz - g_walk.z));
+							const float keep = std::max(0.0f, back - 0.5f);
+							tx = g_walk.x + ux * keep;
+							ty = g_walk.y + uy * keep;
+							tz = g_walk.z + uz * keep;
+						}
+					(void)hit;
+					if (blocked)
+					{
+						// stopped at the wall, as Minecraft's elytra stops at a block (and falls from there)
+						g_walk.x = tx;
+						g_walk.y = ty;
+						g_walk.z = tz;
+						walk_correct(false);
+						g_walk.correctedAt = now;
+					}
+				}
+				else if (jump < 6.0f && walk_blocked(ped, tx, ty, tz) && now - g_walk.correctedAt > 100)
 				{
 					g_walk.x = tx;
 					g_walk.y = ty;
@@ -3559,7 +3947,7 @@ namespace
 		}
 		// fell through GTA's floor (its collision came too late, or wasn't found): back up onto it. Twice in a few
 		// seconds: GTA's collision isn't working out here, so GTA's own movement takes over
-		if (now >= g_walk.nextFellCheck && !g_walk.ground && g_drive.vel.z < -1.0f && g_walk.z < g_walk.standZ - 1.0f)
+		if (!g_mcSpectator && now >= g_walk.nextFellCheck && !g_walk.ground && g_drive.vel.z < -1.0f && g_walk.z < g_walk.standZ - 1.0f)
 		{
 			g_walk.nextFellCheck = now + 250;
 			const auto it = g_proxy.floor.find(cell2_key(int(std::floor(g_walk.x / kCell)), int(std::floor(g_walk.y / kCell))));
@@ -3586,6 +3974,9 @@ namespace
 		}
 		natives::SetEntityCoordsNoOffset(ped, g_walk.x, g_walk.y, g_walk.z + 1.0f);
 		natives::SetEntityHeading(ped, cam.z);
+		natives::SetPedDiesInWater(ped, FALSE); // (Minecraft swims, and keeps its own breath)
+		if (g_mcSpectator)
+			return in;
 		// a car about to hit: GTA's physics has the player for a moment
 		if (car_coming(g_walk.x, g_walk.y, g_walk.z + 1.0f))
 		{
@@ -3673,6 +4064,335 @@ namespace
 		return true;
 	}
 
+	/// The keys for Minecraft's flight in a flying car: W A S D (GTA's driving keys), Space up, Ctrl down, Shift faster.
+	int car_fly_input()
+	{
+		for (const int c : {59, 60, 61, 62, 63, 64, 71, 72, 76, 87, 88, 89, 90})
+			natives::DisableControlAction(0, c, TRUE);
+		int in = 0;
+		if (natives::IsDisabledControlPressed(0, 71))
+			in |= 1;
+		if (natives::IsDisabledControlPressed(0, 72))
+			in |= 2;
+		if (natives::IsDisabledControlPressed(0, 63))
+			in |= 4;
+		if (natives::IsDisabledControlPressed(0, 64))
+			in |= 8;
+		if (natives::IsDisabledControlPressed(0, 76))
+			in |= 16;
+		if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
+			in |= 32;
+		if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+			in |= 64;
+		return in;
+	}
+
+	/// The flying car off: it drives (and falls) again, keeping its speed.
+	void car_fly_end()
+	{
+		if (!g_carFly.on)
+			return;
+		g_carFly.on = false;
+		g_walk.acked = false;
+		if (natives::DoesEntityExist(g_carFly.car))
+		{
+			natives::FreezeEntityPosition(g_carFly.car, FALSE);
+			natives::SetEntityVelocity(g_carFly.car, g_drive.vel.x, g_drive.vel.y, g_drive.vel.z);
+		}
+		g_carFly.car = 0;
+	}
+
+	/// In the driver's seat with Minecraft's movement on, Space twice: the car flies with Steve. Minecraft flies the
+	/// player (its creative flight, against GTA's collision around it) and the car goes where the player is, turned
+	/// where the camera looks; Space twice again (or touching down) and it drives again. Returns the keys for Minecraft.
+	int car_fly_tick(Ped ped, bool control)
+	{
+		const int now = natives::GetGameTimer();
+		const Vehicle car = natives::IsPedInAnyVehicle(ped, FALSE) ? natives::GetVehiclePedIsIn(ped, FALSE) : 0;
+		const bool driver = car != 0 && natives::GetPedInVehicleSeat(car, -1) == ped;
+		bool toggle = false;
+		if (control && driver && g_mcMove && natives::IsDisabledControlJustPressed(0, 76))
+		{
+			toggle = now - g_carFly.lastSpace < 350;
+			g_carFly.lastSpace = toggle ? -100000 : now;
+		}
+		if (g_carFly.on && (toggle || !control || !driver || car != g_carFly.car || !g_mcMove ||
+			(g_walk.acked && g_walk.ground && now - g_carFly.startedAt > 1200)))
+		{
+			car_fly_end();
+			return 0;
+		}
+		if (!g_carFly.on)
+		{
+			if (!toggle)
+				return 0;
+			// take off: the car's centre from the player's feet, in the car's frame, kept all the way
+			const Vector3 p = natives::GetEntityCoords(ped, TRUE);
+			const Vector3 feet = natives::GetOffsetFromEntityGivenWorldCoords(car, p.x, p.y, p.z - 1.0f);
+			g_carFly = {true, car, -feet.x, -feet.y, -feet.z, -100000, now, g_carFly.teleportAt};
+			natives::FreezeEntityPosition(car, TRUE);
+			g_walk.x = p.x;
+			g_walk.y = p.y;
+			g_walk.z = g_walk.standZ = p.z - 1.0f + 0.3f; // (a little up, off the ground)
+			g_walk.acked = false;
+			g_drive.havePos = false;
+			g_drive.vel = {};
+			g_proxy.floor.clear();
+			g_proxy.walls.clear();
+			g_proxy.ceilings.clear();
+			g_proxy.floorBase = -100000.0f;
+			proxy_tick(ped, true);
+			walk_correct(false);
+			natives::Notify("The car flies: ~y~W A S D~s~, ~y~Space~s~ up, ~y~Ctrl~s~ down, ~y~Shift~s~ faster. ~y~Space~s~ twice to drive");
+		}
+		const int in = car_fly_input();
+		if (g_walk.acked && g_drive.havePos)
+		{
+			const float dt = std::clamp(float(now_nanos() - g_drive.posNanos) * 1e-9f, 0.0f, 0.05f);
+			const float tx = g_drive.pos.x + g_drive.vel.x * dt, ty = g_drive.pos.y + g_drive.vel.y * dt, tz = g_drive.pos.z + g_drive.vel.z * dt;
+			const float jx = tx - g_walk.x, jy = ty - g_walk.y, jz = tz - g_walk.z, jump = std::sqrt(jx * jx + jy * jy + jz * jz);
+			if (now - g_carFly.teleportAt < 1500 || jump > 30.0f)
+			{
+				// an ender pearl moved the car: Minecraft's player goes where it is now
+				const Vector3 p = natives::GetEntityCoords(ped, TRUE);
+				g_walk.x = p.x;
+				g_walk.y = p.y;
+				g_walk.z = p.z - 1.0f + 0.3f;
+				if (now - g_carFly.teleportAt < 100)
+					walk_correct(false);
+			}
+			else
+			{
+				g_walk.x = tx;
+				g_walk.y = ty;
+				g_walk.z = tz;
+			}
+		}
+		const float heading = natives::GetGameplayCamRot(2).z, h = heading * 3.14159265f / 180.0f;
+		const float cs = std::cos(h), sn = std::sin(h);
+		const float cx = g_walk.x + g_carFly.ox * cs - g_carFly.oy * sn, cy = g_walk.y + g_carFly.ox * sn + g_carFly.oy * cs;
+		natives::SetEntityCoordsNoOffset(car, cx, cy, g_walk.z + g_carFly.oz);
+		natives::SetEntityRotation(car, 0.0f, 0.0f, heading);
+		proxy_tick(ped, false);
+		return in;
+	}
+
+	/// A Minecraft animal GTA has too ({"t":"animal","m":"a_c_cow","type":28,"pos":[x,y,z],"yaw":deg}, Minecraft
+	/// coordinates): GTA's own takes its place (Minecraft has removed its mob).
+	void animal_message(const std::string &m)
+	{
+		const std::string model = json_str(m, "m");
+		const char *pos = json_value(m, "pos");
+		double x, y, z;
+		if (model.empty() || pos == nullptr || sscanf_s(pos, "[%lf ,%lf ,%lf ]", &x, &y, &z) != 3 || g_animalQueue.size() > 64)
+			return;
+		const Hash hash = natives::GetHashKey(model.c_str());
+		if (!natives::IsModelValid(hash))
+			return;
+		natives::RequestModel(hash);
+		g_animalQueue.push_back({hash, int(json_num(m, "type", 28.0)), float(x), float(-z), float(y - g_yOffset),
+			wrap_degrees(180.0f - float(json_num(m, "yaw", 0.0))), natives::GetGameTimer() + 5000});
+	}
+
+	/// Spawn the queued animals whose models are in; GTA looks after them from then on (they wander off, flee, die).
+	void animals_tick()
+	{
+		const int now = natives::GetGameTimer();
+		for (auto it = g_animalQueue.begin(); it != g_animalQueue.end();)
+		{
+			if (natives::HasModelLoaded(it->model))
+			{
+				Ped a = natives::CreatePed(it->pedType, it->model, it->x, it->y, it->z, it->heading);
+				if (a != 0)
+				{
+					natives::TaskWanderStandard(a);
+					natives::SetPedAsNoLongerNeeded(&a);
+				}
+				natives::SetModelAsNoLongerNeeded(it->model);
+				it = g_animalQueue.erase(it);
+			}
+			else if (now > it->until)
+				it = g_animalQueue.erase(it);
+			else
+				++it;
+		}
+	}
+
+	/// Minecraft's mobs near the player ({"t":"allmobs","m":[[id,x,y,z,width,height,onFire],...]}, Minecraft
+	/// coordinates), for GTA's world to act on (world_mobs_tick).
+	void world_mobs_message(const std::string &m)
+	{
+		g_worldMobs.clear();
+		const char *at = json_value(m, "m");
+		while (at && (at = std::strchr(at + 1, '[')) != nullptr)
+		{
+			int id = 0, fire = 0;
+			double x, y, z, w, h;
+			if (sscanf_s(at, "[%d,%lf,%lf,%lf,%lf,%lf,%d]", &id, &x, &y, &z, &w, &h, &fire) == 7)
+				g_worldMobs.push_back({id, float(x), float(-z), float(y - g_yOffset), float(w), float(h), fire != 0});
+		}
+	}
+
+	/// Ten times a second, GTA's world on Minecraft's mobs: a car driving into one, or a person flung into one, kills
+	/// it; burning people and cars set it alight, and a burning mob sets people alight.
+	void world_mobs_tick(Ped player)
+	{
+		const int now = natives::GetGameTimer();
+		if (g_worldMobs.empty() || now < g_nextWorldMobsAt || g_noInput)
+			return;
+		g_nextWorldMobsAt = now + 100;
+		const Vector3 me = natives::GetEntityCoords(player, TRUE);
+		const Vehicle mine = natives::IsPedInAnyVehicle(player, FALSE) ? natives::GetVehiclePedIsIn(player, FALSE) : 0;
+		std::set<int> kill, burn;
+		auto touching = [](const WorldMob &mob, const Vector3 &o, float r) {
+			const float dx = o.x - mob.x, dy = o.y - mob.y;
+			return dx * dx + dy * dy < (r + mob.width * 0.5f) * (r + mob.width * 0.5f) && o.z > mob.z - 1.2f && o.z < mob.z + mob.height + 1.0f;
+		};
+		each_vehicle_near(me.x, me.y, me.z, 80.0f, [&](Vehicle v, float, float, float) {
+			const Vector3 vel = natives::GetEntityVelocity(v);
+			const bool moving = vel.x * vel.x + vel.y * vel.y + vel.z * vel.z > 4.0f * 4.0f, burning = natives::IsEntityOnFire(v);
+			if (!moving && !burning)
+				return;
+			Vector3 mn = {}, mx = {};
+			natives::GetModelDimensions(natives::GetEntityModel(v), &mn, &mx);
+			for (const WorldMob &mob : g_worldMobs)
+			{
+				const Vector3 l = natives::GetOffsetFromEntityGivenWorldCoords(v, mob.x, mob.y, mob.z + mob.height * 0.5f);
+				const float pad = 0.3f + mob.width * 0.5f;
+				if (l.x < mn.x - pad || l.x > mx.x + pad || l.y < mn.y - pad || l.y > mx.y + pad || l.z < mn.z - mob.height || l.z > mx.z + 0.5f)
+					continue;
+				if (moving)
+					kill.insert(mob.id); // run over
+				else if (burning)
+					burn.insert(mob.id);
+			}
+		});
+		(void)mine;
+		int handles[256];
+		const int n = worldGetAllPeds(handles, 256);
+		for (int i = 0; i < n; ++i)
+		{
+			const Ped q = handles[i];
+			if (q == player || g_doublePeds.count(q))
+				continue;
+			const Vector3 o = natives::GetEntityCoords(q, TRUE);
+			if ((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) > 80.0f * 80.0f)
+				continue;
+			const Vector3 vel = natives::GetEntityVelocity(q);
+			const bool flung = natives::IsPedRagdoll(q) && vel.x * vel.x + vel.y * vel.y + vel.z * vel.z > 3.5f * 3.5f;
+			const bool burning = natives::IsEntityOnFire(q);
+			for (const WorldMob &mob : g_worldMobs)
+			{
+				if (!touching(mob, o, 0.6f))
+					continue;
+				if (flung)
+					kill.insert(mob.id);
+				if (burning)
+					burn.insert(mob.id);
+				if (mob.fire && !burning && !natives::IsPedDeadOrDying(q))
+					natives::StartEntityFire(q);
+			}
+		}
+		auto send = [](const char *type, const std::set<int> &ids) {
+			if (ids.empty())
+				return;
+			std::string out = std::string("{\"t\":\"") + type + "\",\"ids\":[";
+			for (const int id : ids)
+				out += (out.back() == '[' ? "" : ",") + std::to_string(id);
+			g_ws.send(out + "]}");
+		};
+		send("mobkill", kill);
+		send("mobfire", burn);
+	}
+
+	/// Twice a second: GTA's fires near the player (a molotov's, a burning car's, a gas line's) go to Minecraft, which
+	/// lights fire blocks there and sets its mobs in them alight.
+	void fires_tick(Ped player)
+	{
+		const int now = natives::GetGameTimer();
+		if (now < g_nextFiresAt || g_noInput)
+			return;
+		g_nextFiresAt = now + 500;
+		const Vector3 me = natives::GetEntityCoords(player, TRUE);
+		if (natives::GetNumberOfFiresInRange(me.x, me.y, me.z, 40.0f) == 0)
+		{
+			g_firesSent.clear();
+			return;
+		}
+		std::set<std::tuple<int, int, int>> fires;
+		for (int i = -1; i <= 1; ++i)
+			for (int j = -1; j <= 1; ++j)
+			{
+				Vector3 f = {};
+				if (natives::GetClosestFirePos(&f, me.x + i * 14.0f, me.y + j * 14.0f, me.z) &&
+					(f.x - me.x) * (f.x - me.x) + (f.y - me.y) * (f.y - me.y) < 45.0f * 45.0f)
+					fires.emplace(int(std::floor(f.x)), int(std::floor(f.z + g_yOffset)), int(std::floor(-f.y)));
+			}
+		std::string list;
+		for (const auto &[x, y, z] : fires)
+			list += (list.empty() ? "" : ",") + std::to_string(x) + "," + std::to_string(y) + "," + std::to_string(z);
+		if (list == g_firesSent)
+			return;
+		g_firesSent = list;
+		g_ws.send("{\"t\":\"gtafire\",\"p\":[" + list + "]}");
+	}
+
+	/// A Minecraft command that reaches GTA's world ({"t":"gtacmd","c":...}): /kill @e (GTA's people and animals too),
+	/// /time, /weather, /clearall.
+	void command_message(Ped player, const std::string &m)
+	{
+		const std::string c = json_str(m, "c");
+		const Vector3 me = natives::GetEntityCoords(player, TRUE);
+		if (c == "kill")
+		{
+			// "what": all, people, animals, or one GTA model
+			const std::string what = json_str(m, "what");
+			const Hash model = what.rfind("a_c_", 0) == 0 || what.rfind("u_", 0) == 0 || what.rfind("a_m_", 0) == 0 ? natives::GetHashKey(what.c_str()) : 0;
+			int handles[256];
+			const int n = worldGetAllPeds(handles, 256);
+			int killed = 0;
+			for (int i = 0; i < n; ++i)
+			{
+				const Ped q = handles[i];
+				if (q == player || g_doublePeds.count(q) || natives::IsPedDeadOrDying(q))
+					continue;
+				const Vector3 o = natives::GetEntityCoords(q, TRUE);
+				if ((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) > 250.0f * 250.0f)
+					continue;
+				const bool human = natives::IsPedHuman(q) != FALSE;
+				if ((what == "people" && !human) || (what == "animals" && human) || (model != 0 && natives::GetEntityModel(q) != model))
+					continue;
+				natives::ApplyDamageToPed(q, 100000);
+				natives::SetEntityHealth(q, 0);
+				++killed;
+			}
+			char note[96];
+			snprintf(note, sizeof(note), "~r~%d~s~ of GTA's killed", killed);
+			natives::Notify(note);
+		}
+		else if (c == "time")
+			natives::SetClockTime(int(json_num(m, "h", 12.0)) % 24, int(json_num(m, "m", 0.0)) % 60, 0);
+		else if (c == "weather")
+		{
+			const std::string w = json_str(m, "w");
+			natives::SetWeatherTypeOvertimePersist(w == "thunder" ? "THUNDER" : w == "rain" ? "RAIN" : "CLEAR", 3.0f);
+		}
+		else if (c == "clearall")
+		{
+			props_clear_all();
+			mobwar_clear_all();
+			army_clear();
+			g_animalQueue.clear();
+			g_hot.clear();
+			g_hotClusters.clear();
+			g_water.clear();
+			g_waterClusters.clear();
+			natives::ClearArea(me.x, me.y, me.z, 400.0f);
+			natives::StopFireInRange(me.x, me.y, me.z, 400.0f);
+			natives::Notify("Cleared: Minecraft's mobs, items and blocks, and GTA's cars, people and fires around you");
+		}
+	}
+
 	// Free look: degrees per unit of mouse movement GTA reports (per frame), and per second at a pad's full stick
 	constexpr float kMouseLook = 6.0f, kPadLook = 220.0f;
 
@@ -3751,7 +4471,7 @@ namespace
 			Vector3 at = {}, n = {};
 			Entity e = 0;
 			const int probe = natives::StartShapeTestLosProbe(ex, ey, ez, ex - fx * dist, ey - fy * dist, ez - fz * dist, 1 | 2 | 16, ped, 7);
-			if (natives::GetShapeTestResult(probe, &hit, &at, &n, &e) == 2 && hit)
+			if (!g_mcSpectator && natives::GetShapeTestResult(probe, &hit, &at, &n, &e) == 2 && hit)
 			{
 				const float d = std::sqrt((at.x - ex) * (at.x - ex) + (at.y - ey) * (at.y - ey) + (at.z - ez) * (at.z - ez));
 				keep = std::max(0.15f, d - 0.3f);
@@ -4053,10 +4773,18 @@ namespace
 		const bool control = !scene && !busy;
 		const bool screen = control && screen_tick();
 		// Minecraft's movement on foot (GTA's player follows Minecraft's), or GTA's own
+		spectator_apply(ped);
 		walk_set(ped, control && !hidden && walk_wanted(ped));
 		int input = 0;
-		if (g_walk.on && !(!screen && (walk_climb(ped) || walk_ladder(ped))))
+		if (g_walk.on && !(!screen && !g_mcSpectator && (walk_climb(ped) || walk_ladder(ped))))
 			input = walk_tick(ped, screen);
+		// a flying car (in the driver's seat, Space twice)
+		if (!g_walk.on)
+		{
+			const int carInput = car_fly_tick(ped, control && !screen);
+			if (g_carFly.on)
+				input = carInput;
+		}
 		// Minecraft's free look while Minecraft moves the player
 		walk_cam_tick(ped, g_walk.on, screen);
 		// the elytra with GTA's own movement (Minecraft's has its own): Space twice in the air, wearing one
@@ -4149,14 +4877,14 @@ namespace
 			// while GTA moves the character (not Minecraft), Steve's head, body, arms and legs follow its bones: he
 			// walks, sits (in the car's seat), climbs, aims and lies as it does
 			Rig rig = {};
-			const bool rigOn = !g_walk.on && !firstPerson && rig_pose(who, inVehicle, rig);
+			const bool rigOn = !g_walk.on && !g_carFly.on && !firstPerson && rig_pose(who, inVehicle, rig);
 			if (rigOn)
 			{
 				sx = rig.feetX;
 				sy = rig.feetY;
 				sz = rig.feetZ;
 			}
-			if (g_walk.on)
+			if (g_walk.on || g_carFly.on)
 			{
 				sx = g_walk.x;
 				sy = g_walk.y;
@@ -4171,14 +4899,19 @@ namespace
 				snprintf(rigJson + n, sizeof(rigJson) - n, "]");
 			}
 			const bool dead = natives::IsEntityDead(ped) || natives::IsPedDeadOrDying(ped);
+			// GTA's health, armour and stamina, for Minecraft's hearts, armour and hunger bars
+			const int hp = std::max(0, natives::GetEntityHealth(ped) - 100), hpMax = std::max(1, natives::GetEntityMaxHealth(ped) - 100);
+			char bars[96];
+			snprintf(bars, sizeof(bars), ",\"hp\":[%d,%d],\"ar\":%d,\"st\":%.1f,\"fly\":%s", hp, hpMax, natives::GetPedArmour(ped),
+				natives::GetPlayerSprintStaminaRemaining(player), g_carFly.on ? "true" : "false");
 			sendf("{\"t\":\"cam\",\"f\":%d,\"p\":[%.4f,%.4f,%.4f],\"r\":[%.3f,%.3f,%.3f],\"fov\":%.3f,\"fp\":%s,\"pl\":[%.4f,%.4f,%.4f],\"h\":%.3f,"
 				  "\"gun\":%s,\"veh\":%s,\"sn\":%s,\"aim\":[%.3f,%.3f,%.3f],\"aimOn\":%s,\"walk\":%s,\"in\":%d,\"dead\":%s,"
-				  "\"gh\":[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f],\"ghOn\":%s,\"ctl\":%s%s}",
+				  "\"gh\":[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f],\"ghOn\":%s,\"ctl\":%s%s%s}",
 				natives::GetFrameCount(), c.x, c.z + g_yOffset, -c.y, mcYaw, mcPitch, mcRoll, fov, firstPerson ? "true" : "false", sx,
 				sz + g_yOffset, -sy, wrap_degrees(180.0f - natives::GetEntityHeading(who)), holding_gta_weapon(ped) && !scene ? "true" : "false",
-				sit ? "true" : "false", "false", ax, ay, az, aim ? "true" : "false",
-				g_walk.on ? "true" : "false", input, dead ? "true" : "false", bp[0], bp[1], bp[2], bp[3], bp[4], bp[5], hasBlock ? "true" : "false",
-				control ? "true" : "false", rigJson);
+				sit && !g_carFly.on ? "true" : "false", "false", ax, ay, az, aim ? "true" : "false",
+				g_walk.on || g_carFly.on ? "true" : "false", input, dead ? "true" : "false", bp[0], bp[1], bp[2], bp[3], bp[4], bp[5], hasBlock ? "true" : "false",
+				control ? "true" : "false", rigJson, bars);
 		}
 
 		// no camera motion blur (explosions smear GTA's picture, Minecraft's stays sharp: the two look apart)
@@ -4273,6 +5006,10 @@ namespace
 		}
 
 		screen_fx_tick();
+		crash_tick(ped);
+		world_mobs_tick(ped);
+		fires_tick(ped);
+		animals_tick();
 		mobs_tick(ped);
 		hell_tick(ped);
 		end_tick();

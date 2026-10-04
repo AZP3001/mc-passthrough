@@ -302,6 +302,33 @@ namespace natives
 	inline BOOL IsUsingKeyboardAndMouse() { return invoke<BOOL>(0xA571D46727E2B718, 2); }
 	inline void SetCamNearClip(Cam c, float nearClip) { invoke<Void>(0xC7848EFCCC545182, c, nearClip); }
 	inline void SetCamAffectsAiming(Cam c, BOOL affects) { invoke<Void>(0x8C1DC7770C51DC8D, c, affects); }
+	// Dents, money, the HUD's bars, GTA's fires, animals, commands, spectating, swimming, flying cars.
+	inline Vector3 GetOffsetFromEntityGivenWorldCoords(Entity e, float x, float y, float z) { return invoke<Vector3>(0x2274BC1C4885E333, e, x, y, z); }
+	inline void SetVehicleDamage(Vehicle v, float x, float y, float z, float damage, float radius, BOOL focusOnModel)
+	{
+		invoke<Void>(0xA1DD317EA8FD4F29, v, x, y, z, damage, radius, focusOnModel);
+	}
+	inline float GetVehicleBodyHealth(Vehicle v) { return invoke<float>(0xF271147EB7B40F12, v); }
+	inline void SetVehicleBodyHealth(Vehicle v, float h) { invoke<Void>(0xB77D05AC8C78AADB, v, h); }
+	inline float GetVehicleEngineHealth(Vehicle v) { return invoke<float>(0xC45D23BAF168AAB8, v); }
+	inline void SetVehicleEngineHealth(Vehicle v, float h) { invoke<Void>(0x45F6D8EEF34ABEF1, v, h); }
+	inline void SetPedMoney(Ped p, int amount) { invoke<Void>(0xA9C8960E8684C1B5, p, amount); }
+	inline int GetPedArmour(Ped p) { return invoke<int>(0x9483AF821605B1D8, p); }
+	inline float GetPlayerSprintStaminaRemaining(Player p) { return invoke<float>(0x3F9F16F8E65A7ED7, p); }
+	inline BOOL GetClosestFirePos(Vector3 *out, float x, float y, float z) { return invoke<BOOL>(0x352A9F6BCF90081F, out, x, y, z); }
+	inline int GetNumberOfFiresInRange(float x, float y, float z, float radius) { return invoke<int>(0x50CAD495A460B305, x, y, z, radius); }
+	inline void ClearArea(float x, float y, float z, float radius) { invoke<Void>(0xA56F01F3765B93A0, x, y, z, radius, TRUE, FALSE, FALSE, FALSE); }
+	inline void SetPedAsNoLongerNeeded(Ped *p) { invoke<Void>(0x2595DD4236549CE3, p); }
+	inline void SetEveryoneIgnorePlayer(Player p, BOOL t) { invoke<Void>(0x8EEDA153AD141BA4, p, t); }
+	inline void SetPedDiesInWater(Ped p, BOOL t) { invoke<Void>(0x56CEF0AC79073BDE, p, t); }
+	inline void SetPedMaxTimeUnderwater(Ped p, float seconds) { invoke<Void>(0x6BA428C528D9E522, p, seconds); }
+	inline BOOL IsPedFatallyInjured(Ped p) { return invoke<BOOL>(0xD839450756ED5A80, p); }
+	inline BOOL IsEntityAMissionEntity(Entity e) { return invoke<BOOL>(0x0A7B270912999B3C, e); }
+	inline Ped GetPedInVehicleSeat(Vehicle v, int seat) { return invoke<Ped>(0xBB40DD2270B65366, v, seat, FALSE); }
+	inline BOOL HasEntityCollidedWithAnything(Entity e) { return invoke<BOOL>(0x8BAD02F0368D9E14, e); }
+	inline Vector3 GetEntityRotation(Entity e) { return invoke<Vector3>(0xAFBD61CC738D9EB9, e, 2); }
+	inline void SetEntityDynamic(Entity e, BOOL t) { invoke<Void>(0x1718DE8E3F2823CA, e, t); }
+	inline BOOL IsPedHuman(Ped p) { return invoke<BOOL>(0xB980061DA992779D, p); }
 
 	inline void Notify(const char *text)
 	{
