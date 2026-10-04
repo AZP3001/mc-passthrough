@@ -83,6 +83,15 @@ uniform float3 WarpRow2 = float3(0.0, 0.0, 1.0);
 uniform float3 WarpTan = float3(0.7, 0.7, 1.7777);
 // Set by the add-on: GTA's camera position relative to Minecraft's, in Minecraft's camera space.
 uniform float3 WarpT = float3(0.0, 0.0, 0.0);
+// Set by the add-on: the same for Steve (the camera's motion less his own), his screen box (x0, y0, x1, y1; x1 <= x0
+// none), and his depth range and the glass in front of him (near, far, glass distance or 0), in metres.
+uniform float3 SteveT = float3(0.0, 0.0, 0.0);
+uniform float4 SteveBox = float4(0.0, 0.0, 0.0, 0.0);
+uniform float3 SteveDepth = float3(0.0, 0.0, 0.0);
+uniform float SteveBias < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.01; ui_label = "Steve's depth allowance (m)";
+	ui_tooltip = "How far behind GTA's surfaces Steve may still show (he's wider than GTA's character)."; > = 0.2;
+uniform float MarchThickness < ui_type = "drag"; ui_min = 0.05; ui_max = 3.0; ui_step = 0.05; ui_label = "Re-projection thickness (m)";
+	ui_tooltip = "How deep Minecraft's surfaces count when re-projecting: smaller stops thin things smearing on camera moves."; > = 0.6;
 
 // GTA's picture at quarter size with mips: its blurred levels stand in for the light around each pixel. GtaLightTex
 // holds GTA's surfaces only (colour x w, w; w = 0 for the sky), so a block against the sky isn't lit by the sky (that made
@@ -185,6 +194,89 @@ float3 bands(float z)
 	return lerp(float3(0.1, 0.1, 0.1), float3(1.0, 0.85, 0.3), step(0.5, t)) * saturate(1.5 - z / 100.0);
 }
 
+/// Where Minecraft's frame has `p` (GTA camera space) in it: its uv's ndc and how far behind Minecraft's surface there the
+/// point is (negative: in front). False off the frame.
+bool mc_sample(float3 p, float3 T, out float2 n, out float behind)
+{
+	const float2 mcScale = float2(WarpTan.y * WarpTan.z, WarpTan.y);
+	const float3 pm = float3(dot(WarpRow0, p), dot(WarpRow1, p), dot(WarpRow2, p)) + T;
+	n = 0.0;
+	behind = -1e9;
+	if (pm.z > -1e-3)
+		return false;
+	n = pm.xy / -pm.z / mcScale;
+	if (any(abs(n) > 1.0))
+		return false;
+	const float zmv = mc_linear(tex2Dlod(sDepth, float4(n * 0.5 + 0.5, 0, 0)).r);
+	behind = -pm.z - zmv;
+	return zmv < 1e8;
+}
+
+/// March a GTA pixel's ray (GTA's current camera) from near to far, moved into the camera Minecraft rendered with
+/// (rotation, and translation T): where it first goes behind Minecraft's surface, Minecraft is seen. The crossing is
+/// found exactly (bisection) and must be a real one: a ray that only gets behind a thin thing (Steve's edge, a post)
+/// far beyond it sees past it (taking that as a hit smeared thin things across the screen as the camera moved).
+bool march(float3 ray, float3 T, float zFar, out float2 muv, out float zm)
+{
+	const float2 mcScale = float2(WarpTan.y * WarpTan.z, WarpTan.y);
+	const float zNear = 0.2;
+	muv = 0.0;
+	zm = 1e9;
+	float prev = zNear;
+	[loop] for (int i = 0; i < 32; ++i)
+	{
+		const float z = zNear * pow(zFar / zNear, i / 31.0);
+		float2 n;
+		float behind;
+		if (!mc_sample(ray * z, T, n, behind) || behind < -0.03)
+		{
+			prev = z;
+			continue;
+		}
+		// the crossing between the last point in front and this one
+		float lo = prev, hi = z;
+		[loop] for (int b = 0; b < 6; ++b)
+		{
+			const float mid = 0.5 * (lo + hi);
+			float2 nm;
+			float bm;
+			if (mc_sample(ray * mid, T, nm, bm) && bm >= -0.03)
+				hi = mid;
+			else
+				lo = mid;
+		}
+		mc_sample(ray * hi, T, n, behind);
+		if (behind > MarchThickness)
+		{
+			prev = z;
+			continue; // behind a thin thing, not on it
+		}
+		// settle on the surface (fixed point on the surface point's GTA depth)
+		float zg = hi;
+		float2 ndc = n;
+		[loop] for (int k = 0; k < 3; ++k)
+		{
+			const float3 pk = ray * zg;
+			const float3 mk = float3(dot(WarpRow0, pk), dot(WarpRow1, pk), dot(WarpRow2, pk)) + T;
+			if (mk.z > -1e-3)
+				break;
+			const float2 nk = mk.xy / -mk.z / mcScale;
+			if (any(abs(nk) > 1.0))
+				break;
+			const float zk = mc_linear(tex2Dlod(sDepth, float4(nk * 0.5 + 0.5, 0, 0)).r);
+			if (zk > 1e8)
+				break;
+			ndc = nk;
+			const float3 q = float3(nk * mcScale, -1.0) * zk - T;
+			zg = -(q.x * WarpRow0.z + q.y * WarpRow1.z + q.z * WarpRow2.z);
+		}
+		muv = ndc * 0.5 + 0.5;
+		zm = zg;
+		return true;
+	}
+	return false;
+}
+
 void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 outColor : SV_Target0, out float4 outInfo : SV_Target1)
 {
 	const float3 host = tex2D(ReShade::BackBuffer, uv).rgb;
@@ -206,52 +298,24 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 	float zm = 1e9;
 	if (Reproject)
 	{
-		// March this GTA pixel's ray (in GTA's current camera) from near to far, moving each point into the
-		// camera Minecraft rendered with (rotation + how far the camera moved since). The first point that is
-		// behind Minecraft's surface there is where Minecraft is seen: refine it and sample. Thin, close things
-		// (Steve in third person) are found even when the camera has swung sideways.
 		const float3 ray = float3((uv.x * 2.0 - 1.0) * WarpTan.x * BUFFER_WIDTH * BUFFER_RCP_HEIGHT, (1.0 - uv.y * 2.0) * WarpTan.x, -1.0);
-		const float2 mcScale = float2(WarpTan.y * WarpTan.z, WarpTan.y);
-		const float zNear = 0.2, zFar = max(min(zh + allow, 400.0), 0.5);
-		float2 ndc = 0.0;
-		inside = false;
-		[loop] for (int i = 0; i < 24; ++i)
+		const float zFar = max(min(zh + allow + SteveBias + 0.5, 400.0), 0.5);
+		// Steve moves with the camera (it follows him, a car carries both): his part of the picture moves by the camera's
+		// motion less his own, and only counts where it lands on him
+		const bool inBox = SteveBox.z > SteveBox.x && uv.x >= SteveBox.x && uv.x <= SteveBox.z && uv.y >= SteveBox.y && uv.y <= SteveBox.w;
+		if (inBox)
 		{
-			const float z = zNear * pow(zFar / zNear, i / 23.0);
-			const float3 p = ray * z;
-			const float3 pm = float3(dot(WarpRow0, p), dot(WarpRow1, p), dot(WarpRow2, p)) + WarpT;
-			if (pm.z > -1e-3)
-				continue;
-			const float2 n = pm.xy / -pm.z / mcScale;
-			if (any(abs(n) > 1.0))
-				continue;
-			const float zmv = mc_linear(tex2Dlod(sDepth, float4(n * 0.5 + 0.5, 0, 0)).r);
-			if (zmv > -pm.z + 0.03)
-				continue; // still in front of whatever Minecraft drew there
-			// crossed Minecraft's surface: settle on it (fixed-point on the surface point's GTA depth)
-			float zg = z;
-			ndc = n;
-			[loop] for (int k = 0; k < 3; ++k)
+			float2 sm;
+			float sz;
+			if (march(ray, SteveT, zFar, sm, sz) && sz > SteveDepth.x - 0.4 && sz < SteveDepth.y + 0.4)
 			{
-				const float3 pk = ray * zg;
-				const float3 mk = float3(dot(WarpRow0, pk), dot(WarpRow1, pk), dot(WarpRow2, pk)) + WarpT;
-				if (mk.z > -1e-3)
-					break;
-				const float2 nk = mk.xy / -mk.z / mcScale;
-				if (any(abs(nk) > 1.0))
-					break;
-				const float zk = mc_linear(tex2Dlod(sDepth, float4(nk * 0.5 + 0.5, 0, 0)).r);
-				if (zk > 1e8)
-					break;
-				ndc = nk;
-				const float3 q = float3(nk * mcScale, -1.0) * zk - WarpT;
-				zg = -(q.x * WarpRow0.z + q.y * WarpRow1.z + q.z * WarpRow2.z);
+				muv = sm;
+				zm = sz;
+				inside = true;
 			}
-			muv = ndc * 0.5 + 0.5;
-			zm = zg;
-			inside = true;
-			break;
 		}
+		if (!inside)
+			inside = march(ray, WarpT, zFar, muv, zm);
 	}
 	float4 world = inside ? tex2D(sWorld, muv) : 0.0;
 	// Minecraft's blocks and mobs are solid: only its own see-through things (water, glass, ice) and the edges blend
@@ -277,11 +341,17 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 		return;
 	}
 
-	const float visible = zm < zh + allow ? 1.0 : 0.0;
+	// Steve: a little more depth allowance (his blocky shape is wider than GTA's character, in a car's seat too), and
+	// glass in front of him (a car's window, a shop's) doesn't hide him
+	const bool steve = SteveBox.z > SteveBox.x && uv.x >= SteveBox.x && uv.x <= SteveBox.z && uv.y >= SteveBox.y && uv.y <= SteveBox.w
+		&& zm > SteveDepth.x - 0.4 && zm < SteveDepth.y + 0.4;
+	const bool glass = steve && SteveDepth.z > 0.0 && abs(zh - SteveDepth.z) < 0.6 && zm > zh;
+	const float visible = zm < zh + (steve ? max(allow, SteveBias) : allow) || glass ? 1.0 : 0.0;
 	const float cover = world.a * visible;
 	// (relit as straight colour, then put back over GTA's by its coverage)
 	const float3 albedo = world.a > 1e-3 ? world.rgb / world.a : 0.0;
-	outColor = float4(relight(albedo, uv, zm) * cover + host * (1.0 - cover), 1.0);
+	const float3 lit = relight(albedo, uv, zm);
+	outColor = float4((glass ? lerp(lit, host, 0.2) : lit) * cover + host * (1.0 - cover), 1.0);
 	outInfo = float4(cover, cover > 0.0 ? zm : 0.0, zh, 0.0);
 }
 

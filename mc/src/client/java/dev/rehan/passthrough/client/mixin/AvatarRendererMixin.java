@@ -30,6 +30,17 @@ abstract class AvatarRendererMixin {
 			return;
 		}
 
+		// drawn as tall as the host's character (Minecraft's Steve is 1.875 m); in first person (his body shows below
+		// the camera) without his head and what's on it
+		boolean firstPerson = p.firstPerson() && !p.drive() && !minecraft.gameRenderer.mainCamera().isDetached();
+		SteveRig.setLocal(state, p.height() / 1.875F, firstPerson);
+		if (firstPerson) {
+			state.headEquipment = ItemStack.EMPTY;
+			state.headItem.clear();
+			state.wornHeadType = null;
+			state.showCape = false;
+		}
+
 		SteveRig.Pose rig = p.rig() != null && p.rig().length >= 24 && !p.walk() && !p.drive() && minecraft.gui.screen() == null
 			? SteveRig.solve(p.rig()) : null;
 		if (rig != null) {
@@ -73,6 +84,20 @@ abstract class AvatarRendererMixin {
 		if (rig != null) {
 			poseStack.rotate(Axis.ZP, rig.leanB());
 			poseStack.rotate(Axis.XP, rig.leanA());
+		}
+
+		if (SteveRig.firstPerson(state)) {
+			// a little back from the camera, so looking down shows his chest, arms and legs, not the inside of him
+			poseStack.translate(0.0F, 0.0F, 0.22F);
+		}
+	}
+
+	/** The local player as tall as the host's character (after Minecraft's own 0.9375: about his feet). */
+	@Inject(method = "scale(Lnet/minecraft/client/renderer/entity/state/AvatarRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;)V", at = @At("TAIL"))
+	private void passthrough$height(final AvatarRenderState state, final PoseStack poseStack, final CallbackInfo ci) {
+		float k = SteveRig.scaleOf(state);
+		if (k != 1.0F) {
+			poseStack.scale(k, k, k);
 		}
 	}
 }

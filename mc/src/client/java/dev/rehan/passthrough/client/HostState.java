@@ -32,13 +32,14 @@ public final class HostState {
 	 * @param health the host's player's health (and its most), armour (0..100) and stamina (0..100): Minecraft's hearts,
 	 *     armour and hunger bars show them; health -1 when not sent
 	 * @param fly Minecraft flies the player (a flying car): creative flight on
+	 * @param height the host character's height in metres (soles to the top of the head): Steve is drawn that tall
 	 */
 	public record Pose(
 		long hostFrame, double x, double y, double z, float yaw, float pitch, float roll, float fov,
 		boolean firstPerson, double px, double py, double pz, float bodyYaw, long receivedNanos,
 		boolean drive, float lookYaw, float lookPitch, boolean gun, boolean vehicle, boolean sneak, double[] aim,
 		boolean walk, int input, boolean dead, double[] hostHit, boolean control, float[] rig,
-		int health, int healthMax, int armor, float stamina, boolean fly
+		int health, int healthMax, int armor, float stamina, boolean fly, float height
 	) {
 	}
 
@@ -84,7 +85,8 @@ public final class HostState {
 			m.has("hp") ? Math.max(1, m.getAsJsonArray("hp").get(1).getAsInt()) : 1,
 			m.has("ar") ? m.get("ar").getAsInt() : 0,
 			m.has("st") ? m.get("st").getAsFloat() : 100.0F,
-			m.has("fly") && m.get("fly").getAsBoolean()
+			m.has("fly") && m.get("fly").getAsBoolean(),
+			m.has("ht") ? Math.max(1.4F, Math.min(2.1F, m.get("ht").getAsFloat())) : 1.875F
 		);
 		latest = pose;
 		Passthrough.hostHit = pose.hostHit();

@@ -31,6 +31,10 @@ namespace compositor
 	/// The camera shake, applied to the finished picture (x, y: fraction of the screen height; roll: radians), and the
 	/// nether portal's warp (0..1).
 	void set_screen_fx(float shake_x, float shake_y, float shake_roll, float portal_warp);
+	/// Steve this frame: his screen box (0..1, x1 <= x0 for none), his depth range along the camera and the distance of
+	/// glass in front of him (0: none), in metres, and where the character is now (Minecraft coordinates, feet): his part
+	/// of Minecraft's picture is re-projected by the camera's motion less his own, so he stays on the character.
+	void set_steve(float x0, float y0, float x1, float y1, float near_d, float far_d, float glass_d, double x, double y, double z);
 	/// GTA's backbuffer size as ReShade sees it (0 until the first frame).
 	void backbuffer_size(int &width, int &height);
 }

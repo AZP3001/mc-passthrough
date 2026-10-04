@@ -2186,10 +2186,20 @@ namespace
 	};
 
 	/// A dent where a swing (or anything) lands on car `v` at `at` (world), deeper for harder hits.
+	/// A dent in car `v` at `at` (world), `radius` metres across. (SET_VEHICLE_DAMAGE's radius isn't in metres: about
+	/// 250 to the metre; at the metre sizes it took, and the damage it had, the dents didn't show.)
 	void dent_vehicle(Vehicle v, const Vector3 &at, float damage, float radius)
 	{
-		const Vector3 local = natives::GetOffsetFromEntityGivenWorldCoords(v, at.x, at.y, at.z);
-		natives::SetVehicleDamage(v, local.x, local.y, local.z, damage, radius, TRUE);
+		natives::SetVehicleCanBeVisiblyDamaged(v, TRUE);
+		Vector3 local = natives::GetOffsetFromEntityGivenWorldCoords(v, at.x, at.y, at.z);
+		// a point in the middle (no surface found) dents nothing: out to the body's side toward it
+		const float flat = std::sqrt(local.x * local.x + local.y * local.y);
+		if (flat < 0.6f)
+		{
+			local.x = flat > 1e-3f ? local.x / flat * 0.9f : 0.9f;
+			local.y = flat > 1e-3f ? local.y / flat * 0.9f : 0.0f;
+		}
+		natives::SetVehicleDamage(v, local.x, local.y, local.z, damage * 3.0f, radius * 250.0f, TRUE);
 	}
 
 	/// Where on car `v` a swing from (x, y, z) lands: the nearest point of its body toward its middle (or the point
@@ -3339,10 +3349,31 @@ namespace
 
 	/// While Minecraft shows a screen (inventory, chat, ...): GTA stands still and shows its mouse pointer, and the
 	/// pointer, buttons and wheel go to Minecraft (keys go from the keyboard handler). Whether a screen is open.
+	int g_screenClosedAt = 0; // (game timer) when a Minecraft screen was last open (0: none lately)
+
+	/// The pause menu's controls off this frame.
+	void block_pause_menu()
+	{
+		for (const int c : {199, 200, 202})
+		{
+			natives::DisableControlAction(0, c, TRUE);
+			natives::DisableControlAction(2, c, TRUE);
+		}
+	}
+
 	bool screen_tick()
 	{
 		if (g_screen.load() == 0)
 		{
+			// the Esc that closed Minecraft's screen (inventory, chat) doesn't go on to open GTA's pause menu: not
+			// until it's let go and a moment has passed
+			if (g_screenClosedAt != 0)
+			{
+				if ((GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0 || natives::GetGameTimer() - g_screenClosedAt < 500)
+					block_pause_menu();
+				else
+					g_screenClosedAt = 0;
+			}
 			if (g_cursorX >= 0.0f)
 			{
 				compositor::set_cursor(0.0f, 0.0f, false);
@@ -3352,11 +3383,8 @@ namespace
 			return false;
 		}
 		natives::DisableAllControlActions(0);
-		for (const int c : {199, 200, 202}) // the pause menu (Esc closes Minecraft's screen instead)
-		{
-			natives::DisableControlAction(0, c, TRUE);
-			natives::DisableControlAction(2, c, TRUE);
-		}
+		block_pause_menu(); // (Esc closes Minecraft's screen instead)
+		g_screenClosedAt = std::max(1, natives::GetGameTimer());
 		natives::SetMouseCursorThisFrame();
 		const float x = std::clamp(natives::GetDisabledControlNormal(0, 239), 0.0f, 1.0f);
 		const float y = std::clamp(natives::GetDisabledControlNormal(0, 240), 0.0f, 1.0f);
@@ -4510,6 +4538,82 @@ namespace
 		float feetX, feetY, feetZ; // GTA coordinates
 	};
 	float g_rigHeadTilt = 0.18f; // radians the face's lip-to-eyes line leans back from the head's up (lips stick out)
+	float g_steveHeight = 1.8f; // the character's height (soles to the top of the head): Steve is drawn that tall
+	Hash g_steveHeightModel = 0;
+
+	/// Measures the character's height while it stands still and upright (Steve is scaled to it).
+	void steve_height_tick(Ped who)
+	{
+		const Hash model = natives::GetEntityModel(who);
+		if (model != g_steveHeightModel)
+		{
+			g_steveHeightModel = model;
+			g_steveHeight = 1.8f;
+		}
+		if (natives::IsPedInAnyVehicle(who, FALSE) || natives::IsPedRagdoll(who) || natives::IsEntityInAir(who) ||
+			natives::IsPedSwimming(who) || natives::GetEntitySpeed(who) > 2.5f)
+			return;
+		const Vector3 head = natives::GetPedBoneCoords(who, 0x796E), pelvis = natives::GetPedBoneCoords(who, 0x2E28);
+		const float foot = std::min(natives::GetPedBoneCoords(who, 0x3779).z, natives::GetPedBoneCoords(who, 0xCC4D).z);
+		if (pelvis.z - foot < 0.75f || head.z - pelvis.z < 0.45f || std::fabs(head.x - pelvis.x) + std::fabs(head.y - pelvis.y) > 0.25f)
+			return; // crouched, sitting or leaning
+		// (the head bone is ~0.13 m under the top of the head, the ankles ~0.09 m over the soles)
+		const float h = std::clamp(head.z + 0.13f - (foot - 0.09f), 1.5f, 2.05f);
+		g_steveHeight += (h - g_steveHeight) * 0.05f;
+	}
+
+	/// Where Steve is on screen this frame, for the compositor: his box (the character's, a little wider: Steve's
+	/// blocky), how deep he is along the camera, and glass between him and the camera (a car's window, a shop's).
+	void steve_region(Ped ped, const Vector3 &c, const Vector3 &r, float sx, float sy, float sz, bool show)
+	{
+		if (!show)
+		{
+			compositor::set_steve(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+			return;
+		}
+		const float d2r = 3.14159265f / 180.0f, ht = g_steveHeight;
+		const float fx = -std::sin(r.z * d2r) * std::cos(r.x * d2r), fy = std::cos(r.z * d2r) * std::cos(r.x * d2r), fz = std::sin(r.x * d2r);
+		float x0 = 1.0f, y0 = 1.0f, x1 = 0.0f, y1 = 0.0f, dn = 1e9f, df = 0.0f;
+		bool behind = false;
+		for (int i = 0; i < 8; ++i)
+		{
+			const float px = sx + ((i & 1) ? 0.75f : -0.75f), py = sy + ((i & 2) ? 0.75f : -0.75f), pz = sz + ((i & 4) ? ht + 0.25f : -0.15f);
+			const float d = (px - c.x) * fx + (py - c.y) * fy + (pz - c.z) * fz;
+			dn = std::min(dn, d);
+			df = std::max(df, d);
+			float u = 0.0f, v = 0.0f;
+			if (d < 0.05f || !natives::GetScreenCoordFromWorldCoord(px, py, pz, &u, &v))
+			{
+				behind = true;
+				continue;
+			}
+			x0 = std::min(x0, u);
+			y0 = std::min(y0, v);
+			x1 = std::max(x1, u);
+			y1 = std::max(y1, v);
+		}
+		if (df <= 0.0f)
+		{
+			compositor::set_steve(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+			return;
+		}
+		if (behind)
+			x0 = y0 = 0.0f, x1 = y1 = 1.0f; // around the camera (first person): all of the screen
+		// glass on the line from the camera to his chest
+		float glass = 0.0f;
+		{
+			BOOL hit = FALSE;
+			Vector3 end = {}, normal = {};
+			Entity entity = 0;
+			Hash material = 0;
+			const float tz = sz + ht * 0.55f;
+			const int probe = natives::StartShapeTestLosProbe(c.x, c.y, c.z, sx, sy, tz, kGlassFlags, ped, kSeeGlass);
+			if (natives::GetShapeTestResultIncludingMaterial(probe, &hit, &end, &normal, &material, &entity) == 2 && hit && breakable_glass(material))
+				glass = (end.x - c.x) * fx + (end.y - c.y) * fy + (end.z - c.z) * fz;
+		}
+		compositor::set_steve(std::max(0.0f, x0 - 0.02f), std::max(0.0f, y0 - 0.02f), std::min(1.0f, x1 + 0.02f), std::min(1.0f, y1 + 0.02f),
+			std::max(0.0f, dn), df, glass, sx, sz + g_yOffset, -sy);
+	}
 
 	bool rig_pose(Ped who, bool seated, Rig &out)
 	{
@@ -4564,9 +4668,9 @@ namespace
 			out.v[i * 3 + 1] = dirs[i].z;
 			out.v[i * 3 + 2] = -dirs[i].y;
 		}
-		// feet: hips on the character's (Steve's hips are 0.70 m over his soles), or standing on the ground under them;
-		// in between as the legs bend
-		const V hipAnchored = sub(pelvis, mul(up, 0.70f));
+		// feet: hips on the character's (Steve's hips are 0.375 of his height over his soles), or standing on the ground
+		// under them; in between as the legs bend
+		const V hipAnchored = sub(pelvis, mul(up, 0.375f * g_steveHeight));
 		const float legsDown = (dot(lLeg, mul(up, -1)) + dot(rLeg, mul(up, -1))) * 0.5f;
 		const float stand = seated || up.z < 0.75f ? 0.0f : std::clamp((legsDown - 0.55f) / 0.25f, 0.0f, 1.0f);
 		const float ground = std::min(lFoot.z, rFoot.z) - 0.09f; // (the ankle bones are that far over the soles)
@@ -4838,6 +4942,7 @@ namespace
 		compositor::set_host_planes(natives::GetFinalRenderedCamNearClip(), natives::GetFinalRenderedCamFarClip());
 		// who Steve stands in for: GTA's player, or in a cutscene its copy of the player's character
 		const Ped who = scene ? steve_ped(ped) : ped;
+		steve_height_tick(who);
 		const bool inVehicle = natives::IsPedInAnyVehicle(who, FALSE) != FALSE;
 		const bool firstPerson = !scene && !g_drive.on &&
 			(g_walkCam.cam != 0 ? g_walkCam.mode : inVehicle ? natives::GetFollowVehicleCamViewMode() : natives::GetFollowPedCamViewMode()) == 4;
@@ -4845,6 +4950,8 @@ namespace
 		const float mcYaw = wrap_degrees(180.0f - r.z), mcPitch = -r.x, mcRoll = r.y;
 		compositor::set_host_pose(mcYaw, mcPitch, mcRoll, fov, c.x, c.z + g_yOffset, -c.y);
 		compositor::set_camera_locked(g_drive.on);
+		if (g_drive.on)
+			steve_region(ped, c, r, 0, 0, 0, false); // (the chase cam isn't re-projected)
 		if (g_drive.on && g_drive.haveOut)
 		{
 			// the chase cam as set this frame, and the Steve position it framed: Minecraft draws him exactly there
@@ -4913,9 +5020,9 @@ namespace
 			const bool dead = natives::IsEntityDead(ped) || natives::IsPedDeadOrDying(ped);
 			// GTA's health, armour and stamina, for Minecraft's hearts, armour and hunger bars
 			const int hp = std::max(0, natives::GetEntityHealth(ped) - 100), hpMax = std::max(1, natives::GetEntityMaxHealth(ped) - 100);
-			char bars[96];
-			snprintf(bars, sizeof(bars), ",\"hp\":[%d,%d],\"ar\":%d,\"st\":%.1f,\"fly\":%s", hp, hpMax, natives::GetPedArmour(ped),
-				natives::GetPlayerSprintStaminaRemaining(player), g_carFly.on ? "true" : "false");
+			char bars[128];
+			snprintf(bars, sizeof(bars), ",\"hp\":[%d,%d],\"ar\":%d,\"st\":%.1f,\"fly\":%s,\"ht\":%.3f", hp, hpMax, natives::GetPedArmour(ped),
+				natives::GetPlayerSprintStaminaRemaining(player), g_carFly.on ? "true" : "false", g_steveHeight);
 			sendf("{\"t\":\"cam\",\"f\":%d,\"p\":[%.4f,%.4f,%.4f],\"r\":[%.3f,%.3f,%.3f],\"fov\":%.3f,\"fp\":%s,\"pl\":[%.4f,%.4f,%.4f],\"h\":%.3f,"
 				  "\"gun\":%s,\"veh\":%s,\"sn\":%s,\"aim\":[%.3f,%.3f,%.3f],\"aimOn\":%s,\"walk\":%s,\"in\":%d,\"dead\":%s,"
 				  "\"gh\":[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f],\"ghOn\":%s,\"ctl\":%s%s%s}",
@@ -4924,6 +5031,7 @@ namespace
 				sit && !g_carFly.on ? "true" : "false", "false", ax, ay, az, aim ? "true" : "false",
 				g_walk.on || g_carFly.on ? "true" : "false", input, dead ? "true" : "false", bp[0], bp[1], bp[2], bp[3], bp[4], bp[5], hasBlock ? "true" : "false",
 				control ? "true" : "false", rigJson, bars);
+			steve_region(ped, c, r, sx, sy, sz, true);
 		}
 
 		// no camera motion blur (explosions smear GTA's picture, Minecraft's stays sharp: the two look apart)
@@ -4940,10 +5048,10 @@ namespace
 			natives::SetEntityLocallyInvisible(ped);
 		if (who != ped)
 			natives::SetEntityLocallyInvisible(who);
-		if (scene != g_mcHudHidden)
+		if (!control != g_mcHudHidden)
 		{
-			g_mcHudHidden = scene;
-			sendf("{\"t\":\"hud\",\"hidden\":%s}", scene ? "true" : "false");
+			g_mcHudHidden = !control;
+			sendf("{\"t\":\"hud\",\"hidden\":%s}", g_mcHudHidden ? "true" : "false");
 		}
 		if (control)
 		{

@@ -7,6 +7,8 @@ import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.CommandEncoder;
 import dev.rehan.passthrough.Passthrough;
 import java.lang.foreign.MemorySegment;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.phys.Vec3;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.VarHandle;
 import org.joml.Vector4f;
@@ -82,6 +84,7 @@ public final class FrameExporter {
 		float far;
 		long frame;
 		long captureNanos;
+		double steveX, steveY, steveZ;
 
 		void allocate(final int w, final int h) {
 			this.free();
@@ -183,6 +186,15 @@ public final class FrameExporter {
 		c.far = far;
 		c.frame = ++frameCounter;
 		c.captureNanos = now;
+		Minecraft mc = Minecraft.getInstance();
+		if (mc.player != null) {
+			Vec3 at = mc.player.getPosition(mc.getDeltaTracker().getGameTimeDeltaPartialTick(false));
+			c.steveX = at.x;
+			c.steveY = at.y;
+			c.steveZ = at.z;
+		} else {
+			c.steveX = c.steveY = c.steveZ = 0.0;
+		}
 		CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
 		encoder.copyTextureToBuffer(target.getColorTexture(), c.color, 0L, () -> {}, 0);
 		encoder.copyTextureToBuffer(target.getDepthTexture(), c.depth, 0L, () -> {}, 0);
@@ -204,6 +216,11 @@ public final class FrameExporter {
 		}
 
 		long generation = c.generation;
+		if (!c.pose.control()) {
+			// the host's cutscene: none of Minecraft's GUI over it
+			RenderSystem.getDevice().createCommandEncoder().clearColorTexture(target.getColorTexture(), TRANSPARENT);
+		}
+
 		RenderSystem.getDevice().createCommandEncoder().copyTextureToBuffer(target.getColorTexture(), c.overlay, 0L, () -> {
 			if (c.generation == generation && c.busy) {
 				publish(c);
@@ -248,6 +265,9 @@ public final class FrameExporter {
 			m.set(INT, desc + 84, p.firstPerson() ? 1 : 0);
 			m.set(LONG, desc + 88, c.captureNanos);
 			m.set(LONG, desc + 96, System.nanoTime());
+			m.set(DOUBLE, desc + 104, c.steveX);
+			m.set(DOUBLE, desc + 112, c.steveY);
+			m.set(DOUBLE, desc + 120, c.steveZ);
 			VarHandle.fullFence();
 			m.set(LONG, desc, seq + 2L);
 			m.set(INT, 40, slot);

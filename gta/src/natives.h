@@ -66,6 +66,7 @@ namespace natives
 	{
 		return invoke<int>(0x3D87450E15D98694, handle, hit, end, normal, entity);
 	}
+	inline void SetVehicleCanBeVisiblyDamaged(Vehicle v, BOOL toggle) { invoke<Void>(0x4C7028F78FFD3681, v, toggle); }
 	inline BOOL GetScreenCoordFromWorldCoord(float x, float y, float z, float *sx, float *sy) { return invoke<BOOL>(0x34E82F05DF2974F5, x, y, z, sx, sy); }
 	inline void DrawRect(float x, float y, float w, float h, int r, int g, int b, int a) { invoke<Void>(0x3A618A217E5154F0, x, y, w, h, r, g, b, a, FALSE); }
 

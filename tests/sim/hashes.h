@@ -41,6 +41,7 @@
 #define H_CreateWeaponObject 0x9541D3CF0D398F36ull
 #define H_StartShapeTestLosProbe 0x377906D8A31E5586ull
 #define H_GetShapeTestResult 0x3D87450E15D98694ull
+#define H_SetVehicleCanBeVisiblyDamaged 0x4C7028F78FFD3681ull
 #define H_GetScreenCoordFromWorldCoord 0x34E82F05DF2974F5ull
 #define H_DrawRect 0x3A618A217E5154F0ull
 #define H_GetFrameCount 0xFC8202EFC642E6F2ull

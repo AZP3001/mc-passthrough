@@ -45,6 +45,14 @@ namespace
 	unsigned g_hostPoseCount = 0;
 	std::atomic<int> g_poseLag{0}; // measured: 0 matches best (third and first person)
 	Pose g_mcPose;
+	double g_mcSteve[3] = {0, 0, 0}; // Steve's feet when Minecraft rendered its frame
+	bool g_mcSteveValid = false;
+	struct Steve
+	{
+		float box[4] = {0, 0, 0, 0}, depth[3] = {0, 0, 0};
+		double pos[3] = {0, 0, 0};
+		bool valid = false;
+	} g_steve; // under g_poseLock
 
 	HANDLE g_mapping = nullptr;
 	const uint8_t *g_view = nullptr;
@@ -191,6 +199,10 @@ namespace
 		g_mcPose.y = read<double>(desc + 56);
 		g_mcPose.z = read<double>(desc + 64);
 		g_mcPose.valid = true;
+		g_mcSteve[0] = read<double>(desc + 104);
+		g_mcSteve[1] = read<double>(desc + 112);
+		g_mcSteve[2] = read<double>(desc + 120);
+		g_mcSteveValid = g_mcSteve[0] != 0.0 || g_mcSteve[1] != 0.0 || g_mcSteve[2] != 0.0;
 		g_hasFrame = true;
 	}
 
@@ -314,8 +326,10 @@ namespace
 
 		// Re-projection from Minecraft's pose to GTA's latest (extrapolated by the effect's PosePrediction frames).
 		Pose host, prev;
+		Steve steve;
 		{
 			std::lock_guard<std::mutex> lock(g_poseLock);
+			steve = g_steve;
 			const unsigned lag = unsigned(std::clamp(g_poseLag.load(), 0, 2));
 			if (g_hostPoseCount > lag)
 				host = g_hostPoses[(g_hostPoseCount - 1 - lag) & 3];
@@ -337,7 +351,7 @@ namespace
 			host.z += (host.z - prev.z) * predict;
 		}
 		float m[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
-		float t[3] = {0, 0, 0};
+		float t[3] = {0, 0, 0}, ts[3] = {0, 0, 0};
 		if (warp)
 		{
 			warp_matrix(host, g_mcPose, m);
@@ -347,7 +361,32 @@ namespace
 			const float d[3] = {float(host.x - g_mcPose.x), float(host.y - g_mcPose.y), float(host.z - g_mcPose.z)};
 			for (int i = 0; i < 3; ++i)
 				t[i] = rm[0][i] * d[0] + rm[1][i] * d[1] + rm[2][i] * d[2];
+			// Steve: less how far he moved since Minecraft drew him (a jump of metres is a teleport: none)
+			float ds[3] = {d[0], d[1], d[2]};
+			if (steve.valid && g_mcSteveValid)
+			{
+				const double m0 = steve.pos[0] - g_mcSteve[0], m1 = steve.pos[1] - g_mcSteve[1], m2 = steve.pos[2] - g_mcSteve[2];
+				if (m0 * m0 + m1 * m1 + m2 * m2 < 16.0)
+				{
+					ds[0] -= float(m0);
+					ds[1] -= float(m1);
+					ds[2] -= float(m2);
+				}
+			}
+			for (int i = 0; i < 3; ++i)
+				ts[i] = rm[0][i] * ds[0] + rm[1][i] * ds[1] + rm[2][i] * ds[2];
 		}
+		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveT"); v.handle != 0)
+			runtime->set_uniform_value_float(v, ts[0], ts[1], ts[2]);
+		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveBox"); v.handle != 0)
+		{
+			if (steve.valid)
+				runtime->set_uniform_value_float(v, steve.box[0], steve.box[1], steve.box[2], steve.box[3]);
+			else
+				runtime->set_uniform_value_float(v, 0.0f, 0.0f, 0.0f, 0.0f);
+		}
+		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveDepth"); v.handle != 0)
+			runtime->set_uniform_value_float(v, steve.depth[0], steve.depth[1], steve.depth[2]);
 		const char *rows[3] = {"WarpRow0", "WarpRow1", "WarpRow2"};
 		for (int i = 0; i < 3; ++i)
 			if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, rows[i]); v.handle != 0)
@@ -453,6 +492,22 @@ namespace compositor
 		std::lock_guard<std::mutex> lock(g_poseLock);
 		g_hostPoses[g_hostPoseCount & 3] = {yaw, pitch, roll, fov, x, y, z, true};
 		++g_hostPoseCount;
+	}
+
+	void set_steve(float x0, float y0, float x1, float y1, float near_d, float far_d, float glass_d, double x, double y, double z)
+	{
+		std::lock_guard<std::mutex> lock(g_poseLock);
+		g_steve.box[0] = x0;
+		g_steve.box[1] = y0;
+		g_steve.box[2] = x1;
+		g_steve.box[3] = y1;
+		g_steve.depth[0] = near_d;
+		g_steve.depth[1] = far_d;
+		g_steve.depth[2] = glass_d;
+		g_steve.pos[0] = x;
+		g_steve.pos[1] = y;
+		g_steve.pos[2] = z;
+		g_steve.valid = x1 > x0;
 	}
 
 	void set_pose_lag(int frames)
