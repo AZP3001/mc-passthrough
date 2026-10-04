@@ -19,6 +19,12 @@ public class Passthrough implements ModInitializer {
 	public static volatile boolean active;
 	/** True while Minecraft moves the player (on foot) and the host's player follows it; false while the host moves it. */
 	public static volatile boolean walking;
+	/**
+	 * What the host's crosshair is on in its own world within reach (a street, a wall), as {x, y, z, nx, ny, nz} in
+	 * Minecraft coordinates, or null: buckets, boats and the like use it like a block's face (the host's surfaces aren't
+	 * Minecraft blocks, or only rough barriers).
+	 */
+	public static volatile double @org.jspecify.annotations.Nullable [] hostHit;
 	/** Where events for the host go (JSON lines); the client's HostLink sets it. */
 	public static volatile Consumer<String> events = message -> {};
 

@@ -3387,8 +3387,8 @@ namespace
 	}
 
 	/// The movement keys for Minecraft, from GTA's own controls (a pad works too); GTA's player doesn't get them.
-	/// Bits: 1 forward, 2 back, 4 left, 8 right, 16 jump (Space), 64 sprint (Shift, GTA's own sprint key, or Ctrl).
-	/// No sneaking (32): Shift sprints.
+	/// Bits: 1 forward, 2 back, 4 left, 8 right, 16 jump (Space; flying: up), 32 sneak (Ctrl, GTA's duck key; flying:
+	/// down), 64 sprint (Shift, GTA's own sprint key).
 	int walk_input(bool screen)
 	{
 		for (const int c : {21, 22, 30, 31, 32, 33, 34, 35, 36, 55})
@@ -3407,7 +3407,9 @@ namespace
 			in |= 8;
 		if (natives::IsDisabledControlPressed(0, 22))
 			in |= 16;
-		if (natives::IsDisabledControlPressed(0, 21) || natives::IsDisabledControlPressed(0, 36))
+		if (natives::IsDisabledControlPressed(0, 36))
+			in |= 32;
+		if (natives::IsDisabledControlPressed(0, 21))
 			in |= 64;
 		return in;
 	}
@@ -3988,7 +3990,7 @@ namespace
 			g_mcHudHidden = false;
 			walk_set(ped, false);
 			natives::Notify("Minecraft passthrough ~g~connected");
-			natives::Notify("~y~E~s~ inventory  ~y~T~s~ chat  ~y~Tab~s~ GTA weapons  ~y~Shift~s~ sprint  ~y~hold Space~s~ at a high ledge climbs  ~y~F~s~ ladders");
+			natives::Notify("~y~E~s~ inventory  ~y~T~s~ chat  ~y~Tab~s~ GTA weapons  ~y~Shift~s~ sprint  ~y~Ctrl~s~ sneak  ~y~hold Space~s~ at a high ledge climbs  ~y~F~s~ ladders");
 			natives::Notify("~y~F6~s~ Minecraft movement  ~y~F9~s~ god mode  ~y~F7~s~ Minecraft off/on  ~y~F8~s~ fix ground");
 			if (g_godMode)
 				make_safe(ped);

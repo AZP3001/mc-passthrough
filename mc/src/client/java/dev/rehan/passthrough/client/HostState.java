@@ -3,6 +3,7 @@ package dev.rehan.passthrough.client;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.rehan.passthrough.Passthrough;
+import net.minecraft.client.Minecraft;
 
 /** The host's latest camera and player pose, already in Minecraft coordinates (the host converts). */
 public final class HostState {
@@ -24,17 +25,23 @@ public final class HostState {
 	 * @param input the movement keys while walking: 1 forward, 2 back, 4 left, 8 right, 16 jump, 32 sneak, 64 sprint
 	 * @param dead the host's player is dead (Steve lies down)
 	 * @param hostHit what the host's crosshair hits within reach: point and surface normal {x, y, z, nx, ny, nz}, or null
+	 * @param control whether the player has control (false in the host's cutscenes, loading screens and scripted scenes:
+	 *     then Minecraft takes no input at all)
+	 * @param rig the host character's pose while the host moves it (SteveRig): unit vectors for the body's up and right,
+	 *     the head's forward and up, and the left arm, right arm, left leg and right leg, or null
 	 */
 	public record Pose(
 		long hostFrame, double x, double y, double z, float yaw, float pitch, float roll, float fov,
 		boolean firstPerson, double px, double py, double pz, float bodyYaw, long receivedNanos,
 		boolean drive, float lookYaw, float lookPitch, boolean gun, boolean vehicle, boolean sneak, double[] aim,
-		boolean walk, int input, boolean dead, double[] hostHit
+		boolean walk, int input, boolean dead, double[] hostHit, boolean control, float[] rig
 	) {
 	}
 
 	private static final long TIMEOUT_NANOS = 2_000_000_000L;
 	private static volatile Pose latest;
+	/** Whether the last pose gave the player control (a change to false lets go of everything held). */
+	private static volatile boolean hadControl = true;
 	/** The pose this frame renders with, taken once per frame so every hook agrees. Render thread only. */
 	private static Pose frame;
 
@@ -47,7 +54,7 @@ public final class HostState {
 		JsonArray r = m.getAsJsonArray("r");
 		JsonArray pl = m.has("pl") ? m.getAsJsonArray("pl") : p;
 		float yaw = r.get(0).getAsFloat();
-		latest = new Pose(
+		Pose pose = new Pose(
 			m.has("f") ? m.get("f").getAsLong() : 0L,
 			p.get(0).getAsDouble(), p.get(1).getAsDouble(), p.get(2).getAsDouble(),
 			yaw, r.get(1).getAsFloat(), r.size() > 2 ? r.get(2).getAsFloat() : 0.0F,
@@ -66,8 +73,34 @@ public final class HostState {
 			m.has("walk") && m.get("walk").getAsBoolean(),
 			m.has("in") ? m.get("in").getAsInt() : 0,
 			m.has("dead") && m.get("dead").getAsBoolean(),
-			m.has("ghOn") && m.get("ghOn").getAsBoolean() && m.has("gh") ? doubles(m.getAsJsonArray("gh")) : null
+			m.has("ghOn") && m.get("ghOn").getAsBoolean() && m.has("gh") ? doubles(m.getAsJsonArray("gh")) : null,
+			!m.has("ctl") || m.get("ctl").getAsBoolean(),
+			m.has("rig") ? floats(m.getAsJsonArray("rig")) : null
 		);
+		latest = pose;
+		Passthrough.hostHit = pose.hostHit();
+		if (!pose.control() && hadControl) {
+			// a cutscene (or a loading screen, a mission's scene) begins: nothing stays held
+			Minecraft minecraft = Minecraft.getInstance();
+			minecraft.execute(() -> ClientInput.releaseAll(minecraft));
+		}
+
+		hadControl = pose.control();
+	}
+
+	static float[] floats(final JsonArray a) {
+		float[] out = new float[a.size()];
+		for (int i = 0; i < out.length; i++) {
+			out[i] = a.get(i).getAsFloat();
+		}
+
+		return out;
+	}
+
+	/** Whether the player may give Minecraft input now (no host, or the host says so). */
+	static boolean control() {
+		Pose p = live();
+		return p == null || p.control();
 	}
 
 	static double[] doubles(final JsonArray a) {

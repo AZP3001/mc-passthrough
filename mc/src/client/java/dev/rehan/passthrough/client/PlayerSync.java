@@ -184,6 +184,14 @@ public final class PlayerSync {
 		return walking ? cameraYaw : own;
 	}
 
+	/** Every movement key let go (the host's cutscene begins). */
+	static void releaseKeys(final Options o) {
+		keysSet = 0;
+		for (net.minecraft.client.KeyMapping key : new net.minecraft.client.KeyMapping[]{o.keyUp, o.keyDown, o.keyLeft, o.keyRight, o.keyJump, o.keyShift, o.keySprint}) {
+			key.setDown(false);
+		}
+	}
+
 	/** The host's movement keys as Minecraft's own (only changes: a toggle-mode key flips on every press). */
 	private static void keys(final Options o, final int in) {
 		int changed = in ^ keysSet;

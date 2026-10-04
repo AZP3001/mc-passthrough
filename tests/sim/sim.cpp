@@ -713,11 +713,15 @@ int main()
 	g_pressed.clear();
 	check(std::find(g_calls.begin(), g_calls.end(), "ApplyForce:50") != g_calls.end(), "walking into a door pushes it");
 
-	// Shift sprints (no sneaking)
+	// Shift sprints, Ctrl sneaks (and flies down)
 	g_pressed = {21};
 	frame();
 	g_pressed.clear();
-	check(count_out("\"in\":64") > 0, "Shift: Minecraft sprints (no sneak bit)");
+	check(count_out("\"in\":64") > 0, "Shift: Minecraft sprints");
+	g_pressed = {36};
+	frame();
+	g_pressed.clear();
+	check(count_out("\"in\":32") > 0, "Ctrl: Minecraft sneaks (flying: down)");
 
 	// free look: the mouse looks all the way down (GTA's own camera stops well short)
 	check(g_walkCam.cam != 0, "Minecraft's free look renders while Minecraft moves the player");

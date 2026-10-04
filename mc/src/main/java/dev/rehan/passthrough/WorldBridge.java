@@ -1,5 +1,6 @@
 package dev.rehan.passthrough;
 
+import dev.rehan.passthrough.mixin.AbstractArrowAccessor;
 import dev.rehan.passthrough.mixin.ProjectileInvoker;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -280,12 +281,17 @@ public final class WorldBridge {
 				e.setPos(x, y, z);
 				level.broadcastEntityEvent(e, (byte) 17);
 				e.discard();
-			} else if (e instanceof AbstractArrow) {
+			} else if (e instanceof AbstractArrow arrow) {
 				if (stick) {
+					// stuck in the host's wall or ground: in the ground on both sides (only moved there and left floating,
+					// the client's copy flew on and fell, and the two fought over where it was: it jittered about)
 					e.setPos(x, y, z);
 					e.setDeltaMovement(Vec3.ZERO);
-					e.setNoGravity(true);
+					AbstractArrowAccessor stuck = (AbstractArrowAccessor) arrow;
+					stuck.passthrough$setLastState(level.getBlockState(BlockPos.containing(x, y, z)));
+					stuck.passthrough$setInGround(true);
 					e.addTag(HIT_TAG);
+					e.needsSync = true;
 				} else {
 					e.discard();
 				}

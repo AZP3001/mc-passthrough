@@ -32,11 +32,35 @@ final class ClientInput {
 	private ClientInput() {
 	}
 
+	/** Input the player gives (keys, clicks, the hotbar, the pointer): none of it in the host's cutscenes and scenes. */
+	private static final java.util.Set<String> PLAYER_INPUT = java.util.Set.of("key", "slot", "scroll", "cursor", "mbtn", "wheel", "rkey", "chr");
+
+	/** The host's cutscene (loading screen, mission scene) begins: let go of every key and button held. */
+	static void releaseAll(final Minecraft minecraft) {
+		for (KeyMapping key : new KeyMapping[]{minecraft.options.keyAttack, minecraft.options.keyUse, minecraft.options.keyDrop,
+			minecraft.options.keyPickItem, minecraft.options.keySwapOffhand}) {
+			key.setDown(false);
+		}
+
+		PlayerSync.releaseKeys(minecraft.options);
+		if (held != null) {
+			minecraft.mouseHandler.onButton(minecraft.getWindow().handle(), held, InputConstants.RELEASE);
+			held = null;
+		}
+
+	}
+
 	static void handle(final Minecraft minecraft, final JsonObject m) {
 		LocalPlayer player = minecraft.player;
 		Window window = minecraft.getWindow();
 		Screen screen = minecraft.gui.screen();
-		switch (m.get("t").getAsString()) {
+		String type = m.get("t").getAsString();
+		if (!HostState.control() && PLAYER_INPUT.contains(type)
+			&& !(type.equals("key") && m.get("k").getAsString().equals("escape")) && !(type.equals("key") && m.has("down") && !m.get("down").getAsBoolean())) {
+			return; // (letting go and Escape still count)
+		}
+
+		switch (type) {
 			case "key" -> {
 				String k = m.get("k").getAsString();
 				boolean down = !m.has("down") || m.get("down").getAsBoolean();
