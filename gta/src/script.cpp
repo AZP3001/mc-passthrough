@@ -438,7 +438,8 @@ namespace
 				continue; // collision not streamed in yet: try again later
 			g_sampled[column_key(x, z)] = feet;
 			const int top = int(std::floor(groundZ + g_yOffset + 0.5f)) - 1;
-			// something standing on the ground here, up to a mob's height (not a car: they drive off)
+			// something standing on the ground here, up to a mob's height (not a car: they drive off): its top, or a
+			// wall's face crossing the column (a probe starting inside a thick wall doesn't see it from above)
 			int wallTop = top;
 			{
 				BOOL hit = FALSE;
@@ -447,6 +448,13 @@ namespace
 				const int probe = natives::StartShapeTestLosProbe(cx, cy, groundZ + 1.8f, cx, cy, groundZ + 0.45f, 1 | 16, ped, 7);
 				if (natives::GetShapeTestResult(probe, &hit, &at, &n, &e) == 2 && hit && at.z > groundZ + 0.5f && (e == 0 || !g_props.handles.count(e)))
 					wallTop = std::max(top, int(std::floor(at.z + g_yOffset + 0.5f)) - 1);
+				for (int axis = 0; axis < 2 && wallTop < top + 2; ++axis)
+				{
+					const float ax = axis == 0 ? 0.45f : 0.0f, ay = axis == 0 ? 0.0f : 0.45f;
+					const int across = natives::StartShapeTestLosProbe(cx - ax, cy - ay, groundZ + 1.0f, cx + ax, cy + ay, groundZ + 1.0f, 1 | 16, ped, 7);
+					if (natives::GetShapeTestResult(across, &hit, &at, &n, &e) == 2 && hit && (e == 0 || !g_props.handles.count(e)))
+						wallTop = top + 2;
+				}
 			}
 			char entry[64];
 			snprintf(entry, sizeof(entry), "%s%d,%d,%d,%d", columns.empty() ? "" : ",", x, z, top - kGroundDepth + 1, wallTop);
@@ -4111,7 +4119,8 @@ namespace
 		const Vehicle car = natives::IsPedInAnyVehicle(ped, FALSE) ? natives::GetVehiclePedIsIn(ped, FALSE) : 0;
 		const bool driver = car != 0 && natives::GetPedInVehicleSeat(car, -1) == ped;
 		bool toggle = false;
-		if (control && driver && g_mcMove && natives::IsDisabledControlJustPressed(0, 76))
+		// (taking off only slowly: a handbrake tapped twice while drifting mustn't launch the car)
+		if (control && driver && g_mcMove && natives::IsDisabledControlJustPressed(0, 76) && (g_carFly.on || natives::GetEntitySpeed(car) < 12.0f))
 		{
 			toggle = now - g_carFly.lastSpace < 350;
 			g_carFly.lastSpace = toggle ? -100000 : now;
@@ -4255,8 +4264,11 @@ namespace
 				return;
 			Vector3 mn = {}, mx = {};
 			natives::GetModelDimensions(natives::GetEntityModel(v), &mn, &mx);
+			const Vector3 c = natives::GetEntityCoords(v, TRUE);
 			for (const WorldMob &mob : g_worldMobs)
 			{
+				if ((mob.x - c.x) * (mob.x - c.x) + (mob.y - c.y) * (mob.y - c.y) > 8.0f * 8.0f)
+					continue;
 				const Vector3 l = natives::GetOffsetFromEntityGivenWorldCoords(v, mob.x, mob.y, mob.z + mob.height * 0.5f);
 				const float pad = 0.3f + mob.width * 0.5f;
 				if (l.x < mn.x - pad || l.x > mx.x + pad || l.y < mn.y - pad || l.y > mx.y + pad || l.z < mn.z - mob.height || l.z > mx.z + 0.5f)

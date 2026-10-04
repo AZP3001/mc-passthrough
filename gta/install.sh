@@ -14,7 +14,7 @@ WIN=${PASSTHROUGH_WIN_DIR:-'C:\dev\passthrough'}
 RUNTIME=${RUNTIME:-$HERE/third_party/runtime}
 BUILD=${BUILD:-$(wslpath -u "$WIN\\gta\\build")}
 ARGS='-nobattleye -noBE'
-FILES=(ScriptHookV.dll dinput8.dll args.txt MCPassthrough.asi ReShade64.asi ReShade.ini ReShadePreset.ini
+FILES=(ScriptHookV.dll dinput8.dll args.txt MCPassthrough.asi MCPassthrough.ini ReShade64.asi ReShade.ini ReShadePreset.ini
 	reshade-shaders/Shaders/MCPassthrough.fx reshade-shaders/Shaders/ReShade.fxh reshade-shaders/Shaders/ReShadeUI.fxh)
 
 # the Steam libraries: the default ones and every other one listed in their libraryfolders.vdf
@@ -50,6 +50,8 @@ clash=
 [ ! -f "$GTA/args.txt" ] || [ "$(cat "$GTA/args.txt")" = "$ARGS" ] || clash+=" args.txt"
 [ -z "$clash" ] || [ -n "$FORCE" ] || { echo "not replacing what is already in $GTA:$clash (FORCE=1 to replace)"; exit 1; }
 cp -v "$RUNTIME/ScriptHookV.dll" "$RUNTIME/dinput8.dll" "$BUILD/MCPassthrough.asi" "$GTA/"
+# the plugin's settings (yours stay if you changed them): mouse look in Minecraft's movement
+[ -f "$GTA/MCPassthrough.ini" ] || printf '[Minecraft]\r\n; how fast the mouse turns the view in Minecraft movement (1.0 normal, 2.0 twice as fast)\r\nLookSensitivity=1.0\r\n; 1: moving the mouse up looks down\r\nInvertLook=0\r\n; 1: Minecraft movement looks all the way up and down; 0: GTA'"'"'s own camera\r\nFreeLook=1\r\n' > "$GTA/MCPassthrough.ini"
 # ScriptHookV's own args.txt: story mode without BattlEye (no GTA Online while it is there)
 printf -- '%s' "$ARGS" > "$GTA/args.txt"
 cp -v "$RUNTIME/ReShade64.dll" "$GTA/ReShade64.asi"
