@@ -690,7 +690,15 @@ int main()
 	for (int i = 0; i < 40; ++i)
 		frame();
 	g_mc.falling = false;
-	check(!g_mcMove && !g_walk.on && !g_sped.frozen && g_sped.z > 10.9f, "falling through again soon: GTA's movement takes over, the player on the floor");
+	for (int i = 0; i < 30; ++i)
+		frame();
+	std::printf("      after: Minecraft y %.2f, ped z %.2f, walk %d, ground %d\n", g_mc.y, g_sped.z, int(g_walk.on), int(g_walk.ground));
+	check(g_mcMove && g_walk.on && g_sped.z > 10.9f, "falling through again soon: put back on the floor again, Minecraft's movement stays on");
+
+	// (Minecraft's movement off and on again, F6: a fresh start for what follows)
+	g_mcMove = false;
+	for (int i = 0; i < 5; ++i)
+		frame();
 	g_mcMove = true;
 	for (int i = 0; i < 5; ++i)
 		frame();

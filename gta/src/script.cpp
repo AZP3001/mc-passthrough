@@ -1175,7 +1175,10 @@ namespace
 			// put the arrow a little off the block, and the two sides fought over it: it jittered about.)
 			if (entity != 0 && g_props.handles.count(entity))
 				return false;
-			const bool doubled = entity != 0 && g_doublePeds.count(entity);
+			// something carried or attached (the player's own bag or phone, a ped's held thing): not what it hit, trace on
+			// (an arrow caught on one right after it was shot seemed to vanish)
+			const bool carried = entity != 0 && natives::GetEntityType(entity) == 3 && natives::IsEntityAttached(entity);
+			const bool doubled = entity != 0 && (g_doublePeds.count(entity) || carried);
 			const int hitType = entity != 0 ? natives::GetEntityType(entity) : 0;
 			bool glass = !doubled && pr.kind != "pearl" && hitType != 1 && breakable_glass(material);
 			// an arrow at a car's window goes through it, whatever material GTA reports there
@@ -2591,6 +2594,34 @@ namespace
 				aimedObject = aimed; // (a loose thing: a lamp post, a sign, a car's bumper or door lying about)
 				aimed = 0;
 			}
+			if (aimed == 0 && aimedObject == 0)
+			{
+				// the crosshair just past someone (a person is thin): whoever is closest to its line, within a hand's breadth
+				float best = 0.35f;
+				int handles[256];
+				const int n = worldGetAllPeds(handles, 256);
+				const float limit = hit ? std::sqrt((aimedAt.x - ax) * (aimedAt.x - ax) + (aimedAt.y - ay) * (aimedAt.y - ay) + (aimedAt.z - az) * (aimedAt.z - az))
+					: g_meleeRange;
+				for (int i = 0; i < n; ++i)
+				{
+					const Ped q = handles[i];
+					if (q == ped || g_doublePeds.count(q))
+						continue;
+					const Vector3 o = natives::GetEntityCoords(q, TRUE);
+					const float px = o.x - ax, py = o.y - ay, pz = o.z + 0.2f - az;
+					const float t = px * ux + py * uy + pz * uz;
+					if (t < 0.0f || t > limit + 0.3f)
+						continue;
+					const float lx = px - ux * t, ly = py - uy * t, lz = (pz - uz * t) * 0.5f; // (a person is tall: up and down counts less)
+					const float off = std::sqrt(lx * lx + ly * ly + lz * lz);
+					if (off < best)
+					{
+						best = off;
+						aimed = q;
+						aimedAt = Vector3{o.x - lx, 0, o.y - ly, 0, o.z, 0};
+					}
+				}
+			}
 		}
 		auto hitPed = [&](Ped q, float dx, float dy, float d) {
 			if (natives::IsPedDeadOrDying(q) || natives::IsPedFatallyInjured(q))
@@ -2631,8 +2662,8 @@ namespace
 		for (int i = 0; i < n; ++i)
 		{
 			const Ped q = handles[i];
-			if (q == ped || g_doublePeds.count(q))
-				continue;
+			if (q == ped || g_doublePeds.count(q) || !smash)
+				continue; // (only the mace's smash hits everyone round about; a swing hits what it's on, below)
 			const Vector3 o = natives::GetEntityCoords(q, TRUE);
 			const float dx = o.x - me.x, dy = o.y - me.y, d = std::sqrt(dx * dx + dy * dy);
 			if (d > reach || std::fabs(o.z - me.z) > 2.5f || (d > 0.3f && (dx * fx + dy * fy) / d < cone))
@@ -2674,7 +2705,7 @@ namespace
 		each_vehicle_near(me.x, me.y, me.z, reach + 2.5f, [&](Vehicle v, float dx, float dy, float) {
 			const float d = std::sqrt(dx * dx + dy * dy);
 			const Vector3 o = natives::GetEntityCoords(v, TRUE);
-			if (d > reach + 1.5f || std::fabs(o.z - me.z) > 3.0f || (d > 0.5f && (dx * fx + dy * fy) / d < std::min(cone, 0.2f)))
+			if (!smash || d > reach + 1.5f || std::fabs(o.z - me.z) > 3.0f || (d > 0.5f && (dx * fx + dy * fy) / d < std::min(cone, 0.2f)))
 				return;
 			hitCar(v, aimed == v ? aimedAt : vehicle_hit_point(ped, v, me.x, me.y, me.z + 0.3f));
 			done.insert(v);
@@ -2695,10 +2726,13 @@ namespace
 				const Vector3 o = natives::GetEntityCoords(ob, TRUE);
 				const float dx = o.x - me.x, dy = o.y - me.y, d = std::sqrt(dx * dx + dy * dy);
 				const bool isAimed = Entity(ob) == aimedObject;
-				if (!isAimed && (d > reach + 0.8f || o.z < me.z - 1.5f || o.z > me.z + 2.5f || (d > 0.4f && (dx * fx + dy * fy) / d < cone)))
+				if (!isAimed && (!smash || d > reach + 0.8f || o.z < me.z - 1.5f || o.z > me.z + 2.5f || (d > 0.4f && (dx * fx + dy * fy) / d < cone)))
 					continue;
+				// loose (props fixed in place too), then launched along the look; knockback sends it much further
+				natives::FreezeEntityPosition(ob, FALSE);
 				natives::SetEntityDynamic(ob, TRUE);
-				natives::ApplyForceToEntity(ob, ux * launch * 4.0f, uy * launch * 4.0f, launch * 1.5f + 2.0f + uz * launch * 4.0f);
+				const float kb = 1.0f + 1.5f * float(std::min(en.knockback, 50));
+				natives::ApplyForceToEntity(ob, ux * launch * 4.0f * kb, uy * launch * 4.0f * kb, launch * 1.5f + 2.0f + uz * launch * 4.0f * kb);
 			}
 		}
 		{
@@ -3842,7 +3876,9 @@ namespace
 
 	bool screen_tick()
 	{
-		const bool peek = g_screen.load() != 0 && (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+		// (left Alt only, over the inventory and other screens, not chat: AltGr, which types @ and the like, is Ctrl + right
+		// Alt, and hid the chat being typed in)
+		const bool peek = g_screen.load() >= 2 && (GetAsyncKeyState(VK_LMENU) & 0x8000) != 0 && (GetAsyncKeyState(VK_CONTROL) & 0x8000) == 0;
 		if (peek != g_peek)
 		{
 			g_peek = peek;
@@ -4526,52 +4562,41 @@ namespace
 					g_walk.standZ = tz;
 			}
 		}
-		// falling fast through a floor this frame (GTA's collision for it came too late): stood back on it
-		if (!g_mcSpectator && !g_walk.ground && g_drive.vel.z < -2.0f)
+		// (not in water: sinking and diving there is swimming, and GTA's water surface isn't a floor to be put back on)
+		float waterTop = 0.0f;
+		const bool inWater = natives::GetWaterHeight(g_walk.x, g_walk.y, g_walk.z + 2.0f, &waterTop) && waterTop > g_walk.z - 0.2f;
+		// falling fast right through a floor this frame (GTA's collision for it came too late): stood back on it. Only a
+		// real fall through (deep under a flat floor): on slopes and stairs Minecraft's feet are a little under GTA's
+		// surface all the time, and taking that for a fall put the player back up and, twice, ended Minecraft's movement
+		if (!g_mcSpectator && !g_mcFlying && !inWater && !g_walk.ground && g_drive.vel.z < -6.0f)
 		{
 			Vector3 at = {}, n = {};
-			if (solid_probe(ped, g_walk.x, g_walk.y, g_walk.z + 1.1f, g_walk.x, g_walk.y, g_walk.z - 0.05f, at, n) && n.z > 0.6f &&
-				at.z > g_walk.z + 0.05f)
+			if (solid_probe(ped, g_walk.x, g_walk.y, g_walk.z + 1.6f, g_walk.x, g_walk.y, g_walk.z - 0.05f, at, n) && n.z > 0.85f &&
+				at.z > g_walk.z + 0.7f && at.z < g_walk.standZ + 0.3f)
 			{
 				g_walk.z = g_walk.standZ = at.z + 0.02f;
 				g_walk.haveEst = false;
 				walk_correct(false);
-				if (now - g_walk.fellAt < 4000)
-				{
-					// twice in a few seconds: GTA's collision isn't working out here, GTA's own movement takes over
-					g_mcMove = false;
-					natives::SetEntityCoordsNoOffset(ped, g_walk.x, g_walk.y, g_walk.z + 1.0f);
-					walk_set(ped, false);
-					natives::Notify("Minecraft movement ~r~off~s~: GTA's ground wasn't found here (~y~F6~s~ to try again)");
-					return 0;
-				}
-				g_walk.fellAt = now;
 			}
 		}
 		// fell through GTA's floor (its collision came too late, or wasn't found): back up onto it. Twice in a few
 		// seconds: GTA's collision isn't working out here, so GTA's own movement takes over
-		if (!g_mcSpectator && now >= g_walk.nextFellCheck && !g_walk.ground && g_drive.vel.z < -1.0f && g_walk.z < g_walk.standZ - 1.0f)
+		if (!g_mcSpectator && !inWater && now >= g_walk.nextFellCheck && !g_walk.ground && g_drive.vel.z < -1.0f && g_walk.z < g_walk.standZ - 1.0f)
 		{
 			g_walk.nextFellCheck = now + 250;
 			const auto it = g_proxy.floor.find(cell2_key(int(std::floor(g_walk.x / kCell)), int(std::floor(g_walk.y / kCell))));
 			float floor = NAN, ground = 0.0f;
 			if (it != g_proxy.floor.end() && !std::isnan(it->second.top) && it->second.top < g_walk.standZ + 0.6f)
 				floor = it->second.top;
-			else if (natives::GetGroundZFor3dCoord(g_walk.x, g_walk.y, g_walk.standZ + 1.0f, &ground, FALSE, FALSE) && ground != 0.0f &&
+			else if (natives::GetGroundZFor3dCoord(g_walk.x, g_walk.y, g_walk.standZ + 1.0f, &ground, TRUE, FALSE) && ground != 0.0f &&
 				ground < g_walk.standZ + 0.6f)
 				floor = ground;
 			if (!std::isnan(floor) && floor > g_walk.z + 0.9f)
 			{
+				// (back up onto it; never GTA's movement instead: that dropped players bridging over gaps)
 				g_walk.z = g_walk.standZ = floor + 0.02f;
+				g_walk.haveEst = false;
 				walk_correct(false);
-				if (now - g_walk.fellAt < 4000)
-				{
-					g_mcMove = false;
-					natives::SetEntityCoordsNoOffset(ped, g_walk.x, g_walk.y, g_walk.z + 1.0f);
-					walk_set(ped, false);
-					natives::Notify("Minecraft movement ~r~off~s~: GTA's ground wasn't found here (~y~F6~s~ to try again)");
-					return 0;
-				}
 				g_walk.fellAt = now;
 			}
 		}
@@ -6202,7 +6227,9 @@ namespace
 		spectator_apply(ped);
 		walk_set(ped, control && !hidden && walk_wanted(ped));
 		int input = 0;
-		const bool flying = g_mcFlying || g_flyAllowed || g_carFly.on; // (Space is up then: no climbing)
+		float waterTop = 0.0f;
+		const bool swimming = g_walk.on && natives::GetWaterHeight(g_walk.x, g_walk.y, g_walk.z + 2.0f, &waterTop) && waterTop > g_walk.z + 0.3f;
+		const bool flying = g_mcFlying || g_flyAllowed || g_carFly.on || swimming; // (Space is up then, swimming too: no climbing)
 		if (g_walk.on && !(!screen && !g_mcSpectator && !flying && (walk_climb(ped) || walk_ladder(ped))))
 			input = walk_tick(ped, screen);
 		// a flying car (in the driver's seat, Space twice)
@@ -6374,10 +6401,7 @@ namespace
 				g_walk.on || g_carFly.on ? "true" : "false", input, dead ? "true" : "false", bp[0], bp[1], bp[2], bp[3], bp[4], bp[5], hasBlock ? "true" : "false",
 				control ? "true" : "false", rigJson, bars);
 			// (first person: Minecraft puts its player's eyes at the camera, so its feet are 1.62 m under it)
-			if (firstPerson)
-				steve_region(ped, c, r, c.x, c.y, c.z - 1.62f, true);
-			else
-				steve_region(ped, c, r, sx, sy, sz, true);
+			steve_region(ped, c, r, sx, sy, sz, !firstPerson); // (first person: Steve isn't drawn)
 		}
 
 		// no camera motion blur (explosions smear GTA's picture, Minecraft's stays sharp: the two look apart)

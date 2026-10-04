@@ -191,8 +191,10 @@ Also:
 - Minecraft armour you wear protects GTA's player too (4% less damage a point).
 - Hunger bar = stamina: sprinting and hard swimming use it up; empty, you can't sprint until it's back to a third.
 - Arrows stick in people, cars and signs and move with them; arrows and fists break glass where they hit, like a bullet.
-- Swords and other weapons knock along where you look: look up while hitting and they fly up. Lamp posts, signs, bins and
-  car parts lying about can be hit and launched too.
+- A swing hits what your crosshair is on (a person, a car, a thing), not everyone round about (the mace's falling smash
+  still hits all round). Weapons knock along where you look: look up while hitting and they fly up. Lamp posts, signs,
+  bins and car parts can be hit and launched too, much further with Knockback.
+- Hold **left** Alt over the inventory to look about; AltGr (typing @ in chat) and the chat itself are left alone.
 - Lava melts cars (tyres pop, the body caves in, it burns and is pushed back out) and street furniture; fire under a car
   sets it alight. Cars by your blocks don't despawn.
 - Endermen from the End steal GTA's cars and drive off in them. No ghasts come out of the Nether portal.

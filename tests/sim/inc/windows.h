@@ -43,6 +43,7 @@ typedef union
 #define VK_RETURN 0x0D
 #define VK_SHIFT 0x10
 #define VK_CONTROL 0x11
+#define VK_LMENU 0xA4
 #define VK_MENU 0x12
 #define VK_ESCAPE 0x1B
 #define VK_SPACE 0x20

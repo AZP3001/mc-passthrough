@@ -41,7 +41,9 @@ abstract class AvatarRendererMixin {
 			state.showCape = false;
 		}
 
-		SteveRig.Pose rig = p.rig() != null && p.rig().length >= 24 && !p.walk() && !p.drive() && minecraft.gui.screen() == null
+		// (not while a screen that draws Steve itself is open, the inventory: its little Steve would take the pose too)
+		SteveRig.Pose rig = p.rig() != null && p.rig().length >= 24 && !p.walk() && !p.drive()
+			&& (minecraft.gui.screen() == null || minecraft.gui.screen() instanceof net.minecraft.client.gui.screens.ChatScreen)
 			? SteveRig.solve(p.rig()) : null;
 		if (rig != null) {
 			state.bodyRot = rig.bodyRot();

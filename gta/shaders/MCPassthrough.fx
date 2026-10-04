@@ -57,7 +57,7 @@ uniform float ContactShadow < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_s
 	ui_tooltip = "Darken GTA's surfaces right next to Minecraft's (under mobs' feet, around blocks)."; > = 0.5;
 uniform float ContactRadius < ui_type = "drag"; ui_min = 0.1; ui_max = 3.0; ui_step = 0.05; ui_label = "Contact shadow size (m)"; > = 0.7;
 uniform float BloomStrength < ui_type = "drag"; ui_min = 0.0; ui_max = 2.0; ui_step = 0.01; ui_label = "Minecraft glow";
-	ui_tooltip = "Bright Minecraft things (lava, fire, the portal) glow over GTA's picture, as GTA's own lights do."; > = 0.1;
+	ui_tooltip = "Bright Minecraft things (lava, fire, the portal) glow over GTA's picture, as GTA's own lights do."; > = 0.0;
 uniform float BloomThreshold < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.01; ui_label = "Glow threshold";
 	ui_tooltip = "Only Minecraft things brighter than this glow (lava, fire, glowstone; not ordinary blocks in daylight)."; > = 0.97;
 // Set by the add-on: the camera shake, applied to the finished picture so GTA and Minecraft shake together
@@ -300,6 +300,7 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 	{
 		const float3 ray = float3((uv.x * 2.0 - 1.0) * WarpTan.x * BUFFER_WIDTH * BUFFER_RCP_HEIGHT, (1.0 - uv.y * 2.0) * WarpTan.x, -1.0);
 		const float zFar = max(min(zh + allow + SteveBias + 0.5, 400.0), 0.5);
+		inside = false; // (found by the marches below, or not at all)
 		// Steve moves with the camera (it follows him, a car carries both): his part of the picture moves by the camera's
 		// motion less his own, and only counts where it lands on him
 		const bool inBox = SteveBox.z > SteveBox.x && uv.x >= SteveBox.x && uv.x <= SteveBox.z && uv.y >= SteveBox.y && uv.y <= SteveBox.w;
