@@ -195,9 +195,24 @@ final class ClientInput {
 			return;
 		}
 
-		// how charged the swing is (Minecraft's attack cooldown): spam-clicking hits weakly, as in Minecraft
+		// how charged the swing is (Minecraft's attack cooldown): spam-clicking hits weakly, as in Minecraft; and the
+		// weapon's enchantments, which count in the host's world too
 		float strength = player.getAttackStrengthScale(0.5F);
-		Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"melee\",\"k\":\"%s\",\"s\":%.2f}", kind, strength));
+		ItemStack weapon = player.getMainHandItem();
+		Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"melee\",\"k\":\"%s\",\"s\":%.2f,\"kb\":%d,\"sh\":%d,\"fa\":%d,\"lo\":%d}",
+			kind, strength, enchantment(weapon, "knockback"), enchantment(weapon, "sharpness") + enchantment(weapon, "smite") / 2,
+			enchantment(weapon, "fire_aspect"), enchantment(weapon, "looting")));
+	}
+
+	/** The level of an enchantment (by its id's path: "sharpness") on an item, or 0. */
+	static int enchantment(final ItemStack stack, final String id) {
+		for (var e : stack.getEnchantments().entrySet()) {
+			if (e.getKey().unwrapKey().map(k -> k.identifier().getPath().equals(id)).orElse(false)) {
+				return e.getIntValue();
+			}
+		}
+
+		return 0;
 	}
 
 	/** fist, tool, sword, axe, trident, spear or mace: how the host lands the swing. */

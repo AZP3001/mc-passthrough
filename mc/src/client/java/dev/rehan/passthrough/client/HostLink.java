@@ -3,7 +3,9 @@ package dev.rehan.passthrough.client;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import dev.rehan.passthrough.HostBridge;
 import dev.rehan.passthrough.HostCollision;
+import dev.rehan.passthrough.HostWater;
 import dev.rehan.passthrough.MobWar;
 import dev.rehan.passthrough.Nether;
 import dev.rehan.passthrough.Passthrough;
@@ -73,7 +75,14 @@ public final class HostLink extends WebSocketServer {
 				case "cam" -> HostState.update(m);
 				case "hc" -> HostCollision.update(HostState.doubles(m.getAsJsonArray("b")));
 				case "ground" -> WorldBridge.solid(ints(m.getAsJsonArray("c")));
-				case "clear" -> WorldBridge.clearSolid();
+				case "clear" -> {
+					WorldBridge.clearSolid();
+					HostWater.clear();
+				}
+				case "gwater" -> HostWater.update(ints(m.getAsJsonArray("c")));
+				case "mobkill" -> HostBridge.mobKill(ints(m.getAsJsonArray("ids")));
+				case "mobfire" -> HostBridge.mobFire(ints(m.getAsJsonArray("ids")));
+				case "gtafire" -> HostBridge.hostFires(ints(m.getAsJsonArray("p")));
 				case "cmd" -> WorldBridge.command(m.get("c").getAsString());
 				case "gta", "gtastate", "gtainfo", "director" -> this.relay(conn, message);
 				case "blocksync" -> WorldBridge.sync(m.has("r") ? m.get("r").getAsInt() : 48);

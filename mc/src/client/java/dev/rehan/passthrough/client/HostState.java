@@ -29,12 +29,16 @@ public final class HostState {
 	 *     then Minecraft takes no input at all)
 	 * @param rig the host character's pose while the host moves it (SteveRig): unit vectors for the body's up and right,
 	 *     the head's forward and up, and the left arm, right arm, left leg and right leg, or null
+	 * @param health the host's player's health (and its most), armour (0..100) and stamina (0..100): Minecraft's hearts,
+	 *     armour and hunger bars show them; health -1 when not sent
+	 * @param fly Minecraft flies the player (a flying car): creative flight on
 	 */
 	public record Pose(
 		long hostFrame, double x, double y, double z, float yaw, float pitch, float roll, float fov,
 		boolean firstPerson, double px, double py, double pz, float bodyYaw, long receivedNanos,
 		boolean drive, float lookYaw, float lookPitch, boolean gun, boolean vehicle, boolean sneak, double[] aim,
-		boolean walk, int input, boolean dead, double[] hostHit, boolean control, float[] rig
+		boolean walk, int input, boolean dead, double[] hostHit, boolean control, float[] rig,
+		int health, int healthMax, int armor, float stamina, boolean fly
 	) {
 	}
 
@@ -75,10 +79,16 @@ public final class HostState {
 			m.has("dead") && m.get("dead").getAsBoolean(),
 			m.has("ghOn") && m.get("ghOn").getAsBoolean() && m.has("gh") ? doubles(m.getAsJsonArray("gh")) : null,
 			!m.has("ctl") || m.get("ctl").getAsBoolean(),
-			m.has("rig") ? floats(m.getAsJsonArray("rig")) : null
+			m.has("rig") ? floats(m.getAsJsonArray("rig")) : null,
+			m.has("hp") ? m.getAsJsonArray("hp").get(0).getAsInt() : -1,
+			m.has("hp") ? Math.max(1, m.getAsJsonArray("hp").get(1).getAsInt()) : 1,
+			m.has("ar") ? m.get("ar").getAsInt() : 0,
+			m.has("st") ? m.get("st").getAsFloat() : 100.0F,
+			m.has("fly") && m.get("fly").getAsBoolean()
 		);
 		latest = pose;
 		Passthrough.hostHit = pose.hostHit();
+		Passthrough.hostHealth = pose.health() < 0 ? -1.0F : Math.min(20.0F, 20.0F * pose.health() / pose.healthMax());
 		if (!pose.control() && hadControl) {
 			// a cutscene (or a loading screen, a mission's scene) begins: nothing stays held
 			Minecraft minecraft = Minecraft.getInstance();

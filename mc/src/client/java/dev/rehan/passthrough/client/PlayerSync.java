@@ -27,6 +27,8 @@ public final class PlayerSync {
 	private static int psetApplied;
 	/** Where the host's camera looks (Minecraft yaw), for walking that way. */
 	private static volatile float cameraYaw;
+	/** The host's car flies with the player (Minecraft's flight on for it). */
+	private static boolean flyingCar;
 
 	private PlayerSync() {
 	}
@@ -137,8 +139,18 @@ public final class PlayerSync {
 				Passthrough.walking = true;
 				player.setDeltaMovement(Vec3.ZERO);
 				Abilities abilities = player.getAbilities();
-				if (abilities.flying) {
-					abilities.flying = false;
+				if (abilities.flying && !player.isSpectator()) {
+					abilities.flying = false; // (a spectator always flies)
+					player.onUpdateAbilities();
+				}
+			}
+
+			// a flying car: Minecraft's creative flight while it flies, its own walking and falling again after
+			Abilities abilities = player.getAbilities();
+			if (p.fly() != flyingCar) {
+				flyingCar = p.fly();
+				if (abilities.mayfly && !player.isSpectator()) {
+					abilities.flying = flyingCar;
 					player.onUpdateAbilities();
 				}
 			}

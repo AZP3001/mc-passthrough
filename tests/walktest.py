@@ -149,7 +149,7 @@ async def main():
         y = S["mc"]["pos"][1] if S["mc"] else -1
         check(abs(y - FLOOR) < 0.03, f"stands on the host's floor at {FLOOR} (not the ground blocks' 64): y={y:.3f}")
 
-        # --- walking: Minecraft's speed (4.317 m/s), stopped by the host's wall at z=6 (player half-width 0.3)
+        # --- walking: Minecraft's speed made 1.4 times faster (6.04 m/s), stopped by the host's wall at z=6 (half-width 0.3)
         S.update(yaw=0.0, pitch=10.0, **{"in": 1})
         t0 = time.time()
         await asyncio.sleep(2.5)
@@ -157,7 +157,7 @@ async def main():
         pts = [p for p in since(t0) if p[0] - t0 > 0.4 and p[3] < 5.0]
         if len(pts) > 2:
             v = (pts[-1][3] - pts[0][3]) / (pts[-1][0] - pts[0][0])
-            check(3.8 < v < 4.8, f"walks at Minecraft's speed: {v:.2f} m/s")
+            check(5.4 < v < 6.7, f"walks at Minecraft's speed x1.4: {v:.2f} m/s")
         else:
             check(False, "walk speed measured")
         z = S["mc"]["pos"][2]
@@ -182,7 +182,7 @@ async def main():
         pts = [p for p in since(t0) if p[0] - t0 > 0.5]
         if len(pts) > 2:
             v = -(pts[-1][1] - pts[0][1]) / (pts[-1][0] - pts[0][0])
-            check(5.0 < v < 6.3, f"sprints at Minecraft's speed: {v:.2f} m/s")
+            check(7.0 < v < 8.8, f"sprints at Minecraft's speed x1.4: {v:.2f} m/s")
         else:
             check(False, "sprint speed measured")
         await asyncio.sleep(0.5)
@@ -228,7 +228,7 @@ async def main():
         S["in"] = 0
         await asyncio.sleep(0.4)
         x, y = S["mc"]["pos"][0], S["mc"]["pos"][1]
-        check(x < 11.5 and abs(y - 64.6) < 0.03, f"steps back up 0.3: x={x:.2f} y={y:.3f}")
+        check(x < 12.0 and abs(y - 64.6) < 0.03, f"steps back up 0.3: x={x:.2f} y={y:.3f}")
 
         # --- the low wall: jump on it while walking into it
         await pset(ws, 0.5, FLOOR, -4.5)
@@ -266,7 +266,7 @@ async def main():
         await asyncio.sleep(1.2)
         await ws.send(json.dumps({"t": "key", "k": "use", "down": False}))
         await asyncio.sleep(1.5)
-        ys = [p[3] for j in inbox if j.get("t") == "proj" for p in j["p"] if p[1] == "arrow"]
+        ys = [p[3] for j in inbox if j.get("t") == "proj" for p in j["p"] if p[1].split(":")[0] == "arrow"]
         check(bool(ys) and min(ys) < 61.0, f"an arrow passes the host's ground blocks: lowest y {min(ys) if ys else None}")
 
         # --- an ender pearl is traced by the host; its hit teleports Steve

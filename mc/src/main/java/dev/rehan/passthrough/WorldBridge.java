@@ -195,6 +195,7 @@ public final class WorldBridge {
 		MobWar.tick(s);
 		Nether.tick(s);
 		TheEnd.tick(s);
+		HostBridge.tick(s);
 	}
 
 	/** Whether the last tick reported any projectiles (when they're all gone the host hears so once). */
@@ -229,12 +230,30 @@ public final class WorldBridge {
 	}
 
 	/** How the host traces a player's projectile ("kind" or "kind:detail"), or null for one it leaves alone. */
+	/** The level of an enchantment (its id's path) on an item, or 0. */
+	static int enchantment(final ItemStack stack, final String id) {
+		for (var en : stack.getEnchantments().entrySet()) {
+			if (en.getKey().unwrapKey().map(k -> k.identifier().getPath().equals(id)).orElse(false)) {
+				return en.getIntValue();
+			}
+		}
+
+		return 0;
+	}
+
 	private static String projectileKind(final Entity e) {
 		boolean moving = e.getDeltaMovement().lengthSqr() > 1.0E-4;
 		if (e instanceof ThrownTrident trident) {
 			return trident.entityTags().contains(HIT_TAG) || !moving ? null : channeling(trident.getWeaponItem()) ? "trident:chan" : "trident";
 		} else if (e instanceof AbstractArrow arrow) {
-			return arrow.entityTags().contains(HIT_TAG) || !moving ? null : "arrow";
+			// the bow's enchantments go along: power, punch, flame (a burning arrow)
+			if (arrow.entityTags().contains(HIT_TAG) || !moving) {
+				return null;
+			}
+
+			ItemStack bow = arrow.getWeaponItem();
+			int power = bow == null ? 0 : enchantment(bow, "power"), punch = bow == null ? 0 : enchantment(bow, "punch");
+			return "arrow" + (power > 0 ? ":pw" + power : "") + (punch > 0 ? ":pu" + punch : "") + (arrow.isOnFire() ? ":fl" : "");
 		} else if (e instanceof FireworkRocketEntity rocket) {
 			return rocket.isShotAtAngle() ? "firework" : null; // not the ones boosting an elytra flight
 		} else if (e instanceof Snowball) {

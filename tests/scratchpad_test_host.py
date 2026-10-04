@@ -149,6 +149,7 @@ async def main():
 
         # --- melee kinds: sword (hotbar 1), fist (empty: give nothing, select slot of air?)
         state.update(pos=[0.5, GROUND, 0.5], yaw=0.0, pitch=-10.0, fp=False)
+        await ws.send(json.dumps({"t": "cmd", "c": "item replace entity @a hotbar.1 with minecraft:diamond_sword"}))
         await ws.send(json.dumps({"t": "slot", "n": 1}))
         await asyncio.sleep(0.3)
         await ws.send(json.dumps({"t": "key", "k": "attack", "down": True}))
@@ -166,7 +167,7 @@ async def main():
         await ws.send(json.dumps({"t": "key", "k": "use", "down": True}))
         await asyncio.sleep(1.2)
         await ws.send(json.dumps({"t": "key", "k": "use", "down": False}))
-        await expect(inbox, lambda j: j.get("t") == "proj" and any(p[1] == "arrow" for p in j["p"]), 4, "arrow in flight reported")
+        await expect(inbox, lambda j: j.get("t") == "proj" and any(p[1].split(":")[0] == "arrow" for p in j["p"]), 4, "arrow in flight reported (with its bow's enchantments)")
         await expect(inbox, lambda j: j.get("t") == "proj" and j["p"] == [], 12, "empty projectile list once the arrow is down")
 
         # --- snowball and splash potion kinds

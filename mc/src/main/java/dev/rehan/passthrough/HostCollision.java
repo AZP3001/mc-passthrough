@@ -76,7 +76,7 @@ public final class HostCollision {
 
 	/** The player Minecraft moves: it collides with the host's boxes instead of the host's ground blocks. */
 	public static boolean appliesTo(final @Nullable Entity entity) {
-		return Passthrough.walking && entity instanceof Player && entity.level().isClientSide();
+		return Passthrough.walking && entity instanceof Player player && !player.isSpectator() && entity.level().isClientSide();
 	}
 
 	/**

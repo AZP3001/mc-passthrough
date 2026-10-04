@@ -123,12 +123,14 @@ public class PassthroughClient implements ClientModInitializer {
 			Passthrough.events.accept("{\"t\":\"screen\",\"kind\":" + kind + "}");
 		}
 
-		// the host's own flights (its movement) need an elytra worn, as Minecraft's do
+		// the host's own flights (its movement) need an elytra worn, as Minecraft's do; a spectator flies through the
+		// host's world as through Minecraft's
 		if (minecraft.player != null) {
 			int elytra = minecraft.player.getItemBySlot(EquipmentSlot.CHEST).has(DataComponents.GLIDER) ? 1 : 0;
-			if (elytra != elytraSent || ++elytraSentAt % 40 == 0) {
-				elytraSent = elytra;
-				Passthrough.events.accept("{\"t\":\"pstate\",\"ely\":" + elytra + "}");
+			int state = elytra | (minecraft.player.isSpectator() ? 2 : 0);
+			if (state != elytraSent || ++elytraSentAt % 40 == 0) {
+				elytraSent = state;
+				Passthrough.events.accept("{\"t\":\"pstate\",\"ely\":" + elytra + ",\"spec\":" + (state >> 1) + "}");
 			}
 		}
 

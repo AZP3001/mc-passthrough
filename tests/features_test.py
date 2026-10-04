@@ -1,0 +1,175 @@
+"""Integration test for the Minecraft side's bridges to the host (run with Minecraft running, no GTA): animals turning
+into the host's, commands reaching the host (/kill @e, /time, /weather, /clearall), mobs the host kills or sets alight,
+the host's fires, the spectator flag, the HUD values, the host's water. Prints OK/FAIL lines and a summary."""
+import asyncio
+import json
+import time
+
+import websockets
+
+URL = "ws://127.0.0.1:25599"
+GROUND = 64.0
+fails = []
+
+
+def note(*a):
+    print(f"[{time.strftime('%H:%M:%S')}] " + " ".join(str(x) for x in a), flush=True)
+
+
+async def reader(ws, inbox):
+    async for m in ws:
+        try:
+            inbox.append(json.loads(m))
+        except Exception:
+            pass
+
+
+async def expect(inbox, pred, timeout, what):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        for j in list(inbox):
+            if pred(j):
+                inbox.remove(j)
+                note("OK:", what)
+                return j
+        await asyncio.sleep(0.05)
+    note("FAIL:", what)
+    fails.append(what)
+    return None
+
+
+async def cam_loop(ws, state):
+    f = 0
+    while True:
+        x, y, z = state["pos"]
+        f += 1
+        msg = {"t": "cam", "f": f, "p": [x, y + 1.62, z], "r": [0, 20, 0], "fov": 70, "fp": True, "pl": [x, y, z], "h": 0,
+               "ctl": state["ctl"], "hp": [state["hp"], 100], "ar": 50, "st": 80.0}
+        await ws.send(json.dumps(msg))
+        await asyncio.sleep(1 / 60)
+
+
+async def main():
+    state = {"pos": [0.5, GROUND, 0.5], "ctl": True, "hp": 100}
+    async with websockets.connect(URL, max_size=None) as ws:
+        inbox = []
+        asyncio.create_task(reader(ws, inbox))
+        cols = []
+        for x in range(-20, 21):
+            for z in range(-20, 21):
+                cols += [x, z, 62, 63]
+        await ws.send(json.dumps({"t": "ground", "c": cols}))
+        asyncio.create_task(cam_loop(ws, state))
+        await asyncio.sleep(3)
+        for c in ["fill -10 64 -10 10 74 10 minecraft:air", "kill @e[type=!player]", "gamemode creative @a"]:
+            await ws.send(json.dumps({"t": "cmd", "c": c}))
+        await asyncio.sleep(1)
+        inbox.clear()
+
+        # animals the host has too turn into its own
+        await ws.send(json.dumps({"t": "cmd", "c": "summon minecraft:cow 3 64 3"}))
+        j = await expect(inbox, lambda j: j.get("t") == "animal" and j.get("m") == "a_c_cow", 5, "a cow becomes the host's cow (animal a_c_cow)")
+        if j:
+            ok = abs(j["pos"][0] - 3) < 0.6 and abs(j["pos"][2] - 3) < 0.6
+            note("OK:" if ok else "FAIL:", "at the cow's place", j["pos"])
+            if not ok:
+                fails.append("animal position")
+        await ws.send(json.dumps({"t": "cmd", "c": "summon minecraft:chicken 2 64 2"}))
+        await expect(inbox, lambda j: j.get("t") == "animal" and j.get("m") == "a_c_hen", 5, "a chicken becomes the host's hen")
+
+        # commands reach the host's world
+        await ws.send(json.dumps({"t": "cmd", "c": "kill @e[type=minecraft:cow]"}))
+        await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "kill" and j.get("what") == "a_c_cow", 5, "/kill @e[type=cow] kills the host's cows")
+        await ws.send(json.dumps({"t": "cmd", "c": "kill @e"}))
+        await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "kill" and j.get("what") == "all", 5, "/kill @e kills the host's people too")
+        await ws.send(json.dumps({"t": "cmd", "c": "time set night"}))
+        await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "time" and j.get("h") == 19 and j.get("m") == 0, 5,
+                     "/time set night: the host's clock 19:00")
+        await ws.send(json.dumps({"t": "cmd", "c": "weather rain"}))
+        await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "weather" and j.get("w") == "rain", 5, "/weather rain: the host's rain")
+        await ws.send(json.dumps({"t": "cmd", "c": "time set noon"}))
+        await ws.send(json.dumps({"t": "cmd", "c": "weather clear"}))
+        await asyncio.sleep(2)
+        inbox.clear()
+
+        # mobs near the player go to the host; one it kills dies, one it sets alight burns
+        await ws.send(json.dumps({"t": "cmd", "c": "summon minecraft:zombie 4 64 0 {NoAI:1b}"}))
+        await ws.send(json.dumps({"t": "cmd", "c": "summon minecraft:skeleton -4 64 0 {NoAI:1b}"}))
+        j = await expect(inbox, lambda j: j.get("t") == "allmobs" and len(j.get("m", [])) >= 2, 5, "mobs near the player are listed (allmobs)")
+        if j:
+            ids = {round(m[1]): m[0] for m in j["m"]}
+            zombie, skeleton = ids.get(4), ids.get(-4)
+            await ws.send(json.dumps({"t": "mobkill", "ids": [zombie]}))
+            await ws.send(json.dumps({"t": "mobfire", "ids": [skeleton]}))
+            await asyncio.sleep(1.0)
+            inbox.clear()
+            j = await expect(inbox, lambda j: j.get("t") == "allmobs", 3, "(listed again)")
+            if j:
+                left = {m[0]: m for m in j["m"]}
+                ok = zombie not in left
+                note("OK:" if ok else "FAIL:", "the mob the host's car hit is dead (mobkill)")
+                if not ok:
+                    fails.append("mobkill")
+                ok = skeleton in left and left[skeleton][6] == 1
+                note("OK:" if ok else "FAIL:", "the mob the host's fire reached burns (mobfire)")
+                if not ok:
+                    fails.append("mobfire")
+
+        # the host's fire: fire there in Minecraft too
+        inbox.clear()
+        await ws.send(json.dumps({"t": "gtafire", "p": [6, 64, 6]}))
+        await expect(inbox, lambda j: j.get("t") == "hot" and [6, 64, 6] in [j["fire"][i:i + 3] for i in range(0, len(j.get("fire", [])), 3)], 5,
+                     "the host's fire lights a fire block there (hot)")
+
+        # spectator: the host is told
+        await ws.send(json.dumps({"t": "cmd", "c": "gamemode spectator @a"}))
+        await expect(inbox, lambda j: j.get("t") == "pstate" and j.get("spec") == 1, 5, "spectator: pstate spec 1")
+        await ws.send(json.dumps({"t": "cmd", "c": "gamemode creative @a"}))
+        await expect(inbox, lambda j: j.get("t") == "pstate" and j.get("spec") == 0, 5, "creative again: spec 0")
+
+        # survival: Minecraft's health follows the host's; damage goes to the host
+        await ws.send(json.dumps({"t": "cmd", "c": "gamemode survival @a"}))
+        state["hp"] = 50
+        await asyncio.sleep(1.0)
+        inbox.clear()
+        await ws.send(json.dumps({"t": "cmd", "c": "damage @p 4 minecraft:generic"}))
+        j = await expect(inbox, lambda j: j.get("t") == "pdmg", 5, "damage in survival goes to the host (pdmg)")
+        if j:
+            ok = 0.5 < j["d"] <= 4.01  # (what Minecraft really took, after its own reductions)
+            note("OK:" if ok else "FAIL:", "by what Minecraft took", j["d"])
+            if not ok:
+                fails.append("pdmg amount")
+        await ws.send(json.dumps({"t": "cmd", "c": "gamemode creative @a"}))
+        state["hp"] = 100
+
+        # cutscene: no input reaches Minecraft
+        state["ctl"] = False
+        await asyncio.sleep(0.3)
+        await ws.send(json.dumps({"t": "key", "k": "inventory", "down": True}))
+        await ws.send(json.dumps({"t": "key", "k": "inventory", "down": False}))
+        await asyncio.sleep(1.0)
+        opened = any(j.get("t") == "screen" and j.get("kind") == 2 for j in inbox)
+        note("FAIL:" if opened else "OK:", "no inventory in a cutscene (ctl false)")
+        if opened:
+            fails.append("ctl")
+        state["ctl"] = True
+        await asyncio.sleep(0.3)
+
+        # /clearall: blocks and mobs gone, the host told
+        await ws.send(json.dumps({"t": "cmd", "c": "setblock 2 64 -3 minecraft:stone"}))
+        await ws.send(json.dumps({"t": "cmd", "c": "summon minecraft:zombie 2 64 3 {NoAI:1b}"}))
+        await asyncio.sleep(1.0)
+        inbox.clear()
+        await ws.send(json.dumps({"t": "cmd", "c": "clearall"}))
+        await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "clearall", 5, "/clearall tells the host")
+        await asyncio.sleep(1.0)
+        j = [j for j in inbox if j.get("t") == "allmobs"]
+        ok = not j or not j[-1].get("m")
+        note("OK:" if ok else "FAIL:", "/clearall leaves no mobs")
+        if not ok:
+            fails.append("clearall mobs")
+        note("SUMMARY:", "ALL PASSED" if not fails else f"{len(fails)} FAILED: {fails}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
