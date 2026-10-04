@@ -2,6 +2,7 @@ package dev.rehan.passthrough;
 
 import dev.rehan.passthrough.mixin.AbstractArrowAccessor;
 import dev.rehan.passthrough.mixin.ProjectileInvoker;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -34,6 +35,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.alchemy.PotionContents;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -287,6 +289,34 @@ public final class WorldBridge {
 	 * The host traced a projectile into something of its own: a firework bursts there; an arrow goes into a person
 	 * or car (gone) or sticks where it hit a wall; an ender pearl lands there (Steve teleports).
 	 */
+	/** The host's player was saved from dying by the totem in Minecraft's player's hand: used up, as Minecraft's is. */
+	public static void totem() {
+		MinecraftServer s = server;
+		if (s == null) {
+			return;
+		}
+
+		s.execute(() -> {
+			if (s.getPlayerList().getPlayers().isEmpty()) {
+				return;
+			}
+
+			ServerPlayer player = s.getPlayerList().getPlayers().get(0);
+			for (net.minecraft.world.InteractionHand hand : net.minecraft.world.InteractionHand.values()) {
+				net.minecraft.world.item.ItemStack held = player.getItemInHand(hand);
+				if (held.is(net.minecraft.world.item.Items.TOTEM_OF_UNDYING)) {
+					held.shrink(1);
+					break;
+				}
+			}
+
+			player.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.REGENERATION, 900, 1));
+			player.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.ABSORPTION, 100, 1));
+			player.addEffect(new net.minecraft.world.effect.MobEffectInstance(net.minecraft.world.effect.MobEffects.FIRE_RESISTANCE, 800, 0));
+			player.level().broadcastEntityEvent(player, (byte) 35); // (the totem's animation, sound and particles)
+		});
+	}
+
 	/**
 	 * Arrows stuck in the host's people, cars and signs, where those are now ({id, x, y, z, yaw, pitch} each), and those
 	 * to let go of (gone: they fall out). Any thread.
@@ -528,8 +558,75 @@ public final class WorldBridge {
 	}
 
 	/** `source`: what exploded or was blown up, e.g. "tnt", "creeper", "fireball" (a ghast's). */
+	/** How shot up each block is (1: broken), from the host's guns. Server thread. */
+	private static final Map<BlockPos, Float> shotDamage = new HashMap<>();
+	/** The host's own blast going off in Minecraft's world: not reported back to it (it set its own off already). */
+	private static boolean hostBlast;
+
+	/**
+	 * A shot from the host's guns landed at (x, y, z), flying along dir (Minecraft coordinates): the block it hit takes
+	 * damage, by how hard it is (glass and leaves break at once, stone after a few, obsidian practically never); a
+	 * rocket's or grenade's (boom) blows the blocks round it up. Any thread.
+	 */
+	public static void hostShot(final double x, final double y, final double z, final double dx, final double dy, final double dz, final boolean boom) {
+		MinecraftServer s = server;
+		if (s == null) {
+			return;
+		}
+
+		s.execute(() -> {
+			ServerLevel level = s.overworld();
+			if (boom) {
+				hostBlast = true;
+				try {
+					// (the blocks and Minecraft's mobs, not the player: the host's own blast hurt them already)
+					level.explode(null, null, new net.minecraft.world.level.ExplosionDamageCalculator() {
+						@Override
+						public boolean shouldDamageEntity(final net.minecraft.world.level.Explosion explosion, final Entity entity) {
+							return !(entity instanceof net.minecraft.world.entity.player.Player);
+						}
+					}, new Vec3(x, y, z), 2.5F, false, Level.ExplosionInteraction.TNT);
+				} finally {
+					hostBlast = false;
+				}
+
+				return;
+			}
+
+			// the block just inside where it hit
+			for (double in = 0.05; in <= 0.6; in += 0.15) {
+				BlockPos pos = BlockPos.containing(x + dx * in, y + dy * in, z + dz * in);
+				BlockState state = level.getBlockState(pos);
+				if (state.isAir() || state.is(Blocks.BARRIER) || !state.getFluidState().isEmpty()) {
+					continue; // (barriers: the host's own walls)
+				}
+
+				float hardness = state.getDestroySpeed(level, pos);
+				if (hardness < 0.0F) {
+					return; // bedrock and the like
+				}
+
+				float damage = shotDamage.getOrDefault(pos, 0.0F) + 1.0F / Math.max(1.0F, hardness * 2.5F);
+				if (damage >= 0.999F) {
+					shotDamage.remove(pos);
+					level.destroyBlockProgress(pos.hashCode(), pos, -1);
+					level.destroyBlock(pos, true);
+				} else {
+					shotDamage.put(pos.immutable(), damage);
+					level.destroyBlockProgress(pos.hashCode(), pos, (int) (damage * 10.0F));
+				}
+
+				if (shotDamage.size() > 512) {
+					shotDamage.clear();
+				}
+
+				return;
+			}
+		});
+	}
+
 	public static void onExplosion(final Vec3 center, final float radius, final String source) {
-		if (Passthrough.active) {
+		if (Passthrough.active && !hostBlast) {
 			Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"explosion\",\"pos\":[%.3f,%.3f,%.3f],\"r\":%.2f,\"src\":\"%s\"}",
 				center.x, center.y, center.z, radius, source));
 		}

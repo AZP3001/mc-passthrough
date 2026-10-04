@@ -176,9 +176,10 @@ Type them in Minecraft's chat (T):
 | `/range 12` | your reach in blocks, for blocks, mobs and GTA's people, cars and things (default 8) |
 | `/enchant @p knockback 1000` | any level, past Minecraft's limit (an item holds 255; higher levels count in GTA) |
 | `/summon car` | GTA things: `car`, `truck`, `tank`, `plane`, `jet`, `heli`, `boat`, `bike`, `bus`, `police`, `npc`, `cop`, `soldier`, or any GTA model name (`adder`, `a_m_y_hipster_01`). Minecraft's own mobs summon as always |
-| `/gta spawn tank` | the same as `/summon` |
-| `/gta superjump` | GTA's cheats and abilities, each on / off: `superjump`, `fastrun`, `fastswim`, `explosiveammo`, `fireammo`, `explosivemelee`, `slidey` (slidey cars), `moon` (low gravity), `slowmo`, `infiniteammo`, `neverwanted`, `onehit`, `drunk`; and `wanted 0-5`, `heal`, `armor`, `weapons` |
+| `/gta spawn car 5` | the same as `/summon`, and more of them at once; `/gta spawn adder drive` puts you at the wheel |
+| `/gta superjump` | GTA's cheats and abilities, each on / off: `superjump`, `fastrun`, `fastswim`, `explosiveammo`, `fireammo`, `explosivemelee`, `slidey` (slidey cars), `moon` (low gravity), `slowmo`, `infiniteammo`, `neverwanted`, `onehit`, `drunk`, `blackout`, `freezetime`; and `wanted 0-5`, `heal`, `armor`, `weapons`, `traffic 0-3`, `crowds 0-3` (how many cars and people GTA has about), `clear` (none around you), `flip` / `fix` / `boost` (your car), `sethome` / `home`, `tp x y [z]`, `skyfall`, `ragdoll`. `/gta` alone lists them |
 | `/tune max` | the car you sit in: every performance part maxed and turbo. Also `stock`, `engine 1-4`, `brakes`, `transmission`, `suspension`, `armor`, `turbo on/off`, `wheels N`, `spoiler`, `bumpers`, `visuals`, `xenon`, `tint 0-6`, `repair` |
+| `/kit` | the starter kit again (you get it once; the game no longer clears your inventory every start) |
 | `/netherportal` | a lit Nether portal a few blocks ahead |
 | `/endportal` | an End portal a few blocks ahead |
 
@@ -196,6 +197,15 @@ Also:
   sets it alight. Cars by your blocks don't despawn.
 - Endermen from the End steal GTA's cars and drive off in them. No ghasts come out of the Nether portal.
 - A bow drawn (or a loaded crossbow) at people: close up they put their hands up, further off they run.
+- GTA's guns break Minecraft's blocks: glass and leaves at once, stone after a few shots, obsidian practically never
+  (cracks show as they take damage); rockets and grenades blow them up.
+- A shield held up blocks GTA's bullets and blows. A totem of undying in hand saves you from dying in GTA (and is used
+  up, with Minecraft's animation). Golden apples' absorption adds GTA body armour. Eating refills stamina and some
+  health. Night vision is GTA's night vision; invisible, GTA's people and police don't see you. A spyglass zooms GTA's
+  camera (Minecraft movement).
+- Compasses point to your GTA map waypoint. Hit a parked car and its alarm goes off; heavy blows jolt the screen a bit.
+  A fishing rod hooks cars and loose things too. Hurt in GTA, Steve flinches and you hear it.
+- Out of breath (empty hunger bar), GTA's own sprint waits too. Water douses a burning car for good.
 
 ## Settings
 

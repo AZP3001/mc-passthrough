@@ -33,6 +33,9 @@ typedef union
 #define APIENTRY
 #define WINAPI
 #define MAXDWORD 0xffffffffu
+// (as the real windows.h: these two are macros for nothing, so a variable named so breaks the real build)
+#define near
+#define far
 #define DLL_PROCESS_ATTACH 1
 #define DLL_PROCESS_DETACH 0
 #define VK_BACK 0x08

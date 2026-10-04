@@ -45,6 +45,7 @@ public final class HostState {
 
 	private static final long TIMEOUT_NANOS = 2_000_000_000L;
 	private static volatile Pose latest;
+	private static int lastHealth = -1;
 	/** Whether the last pose gave the player control (a change to false lets go of everything held). */
 	private static volatile boolean hadControl = true;
 	/** The pose this frame renders with, taken once per frame so every hook agrees. Render thread only. */
@@ -88,6 +89,19 @@ public final class HostState {
 			m.has("fly") && m.get("fly").getAsBoolean(),
 			m.has("ht") ? Math.max(1.4F, Math.min(2.1F, m.get("ht").getAsFloat())) : 1.875F
 		);
+		// the host's player hurt (shot, run over, a fall): Steve flinches red and Minecraft's hurt sound plays
+		if (pose.health() >= 0 && lastHealth >= 0 && pose.health() < lastHealth - Math.max(2, pose.healthMax() / 40)) {
+			Minecraft minecraft = Minecraft.getInstance();
+			minecraft.execute(() -> {
+				if (minecraft.player != null && minecraft.player.hurtTime == 0) {
+					minecraft.player.hurtDuration = 10;
+					minecraft.player.hurtTime = 10;
+					minecraft.player.playSound(net.minecraft.sounds.SoundEvents.PLAYER_HURT, 0.8F, 1.0F);
+				}
+			});
+		}
+
+		lastHealth = pose.health();
 		latest = pose;
 		Passthrough.hostHit = pose.hostHit();
 		Passthrough.hostHealth = pose.health() < 0 ? -1.0F : Math.min(20.0F, 20.0F * pose.health() / pose.healthMax());

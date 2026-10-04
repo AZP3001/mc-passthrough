@@ -40,6 +40,30 @@ public class Passthrough implements ModInitializer {
 	/** An item's enchantment levels over Minecraft's 255 (/enchant): its custom data, by the enchantment's id path. */
 	public static final String OVER_LEVELS = "passthrough_enchants";
 	/**
+	 * The starter kit, once per player (it used to be given, after clearing the inventory, every time the game
+	 * started: what was collected was lost). /kit gives it again.
+	 */
+	public static final java.util.List<String> KIT = java.util.List.of(
+		"give @a[tag=!passthrough_kit] minecraft:ender_pearl 16",
+		"give @a[tag=!passthrough_kit] minecraft:diamond_sword",
+		"give @a[tag=!passthrough_kit] minecraft:crossbow[enchantments={quick_charge:3}]",
+		"give @a[tag=!passthrough_kit] minecraft:bow[enchantments={power:5,infinity:1}]",
+		"give @a[tag=!passthrough_kit] minecraft:tnt 64",
+		"give @a[tag=!passthrough_kit] minecraft:flint_and_steel",
+		"give @a[tag=!passthrough_kit] minecraft:creeper_spawn_egg 64",
+		"give @a[tag=!passthrough_kit] minecraft:grass_block 64",
+		"give @a[tag=!passthrough_kit] minecraft:firework_rocket 64",
+		"give @a[tag=!passthrough_kit] minecraft:arrow 64",
+		"give @a[tag=!passthrough_kit] minecraft:firework_rocket[fireworks={flight_duration:3,explosions:[{shape:\"large_ball\",colors:[I;16733525,16755200],has_trail:true}]}] 64",
+		"give @a[tag=!passthrough_kit] minecraft:shield",
+		"give @a[tag=!passthrough_kit] minecraft:spyglass",
+		"give @a[tag=!passthrough_kit] minecraft:water_bucket",
+		"give @a[tag=!passthrough_kit] minecraft:lava_bucket",
+		"give @a[tag=!passthrough_kit] minecraft:cooked_beef 32",
+		"give @a[tag=!passthrough_kit] minecraft:splash_potion[potion_contents={potion:\"minecraft:strong_harming\"}] 8",
+		"tag @a add passthrough_kit"
+	);
+	/**
 	 * What the host's crosshair is on in its own world within reach (a street, a wall), as {x, y, z, nx, ny, nz} in
 	 * Minecraft coordinates, or null: buckets, boats and the like use it like a block's face (the host's surfaces aren't
 	 * Minecraft blocks, or only rough barriers).
@@ -102,13 +126,17 @@ public class Passthrough implements ModInitializer {
 					return 1;
 				})));
 			// GTA's cheats, abilities and spawning: /gta superjump, /gta explosiveammo, /gta spawn tank, ...
-			dispatcher.register(Commands.literal("gta").then(Commands.argument("setting", StringArgumentType.greedyString())
+			dispatcher.register(Commands.literal("gta").executes(context -> {
+					events.accept("{\"t\":\"gtacmd\",\"c\":\"gta\",\"a\":\"help\"}");
+					return 1;
+				}).then(Commands.argument("setting", StringArgumentType.greedyString())
 				.suggests((context, builder) -> {
 					String typed = builder.getRemainingLowerCase();
 					String[] all = {"spawn car", "spawn truck", "spawn tank", "spawn plane", "spawn jet", "spawn heli", "spawn boat", "spawn bike",
 						"spawn bus", "spawn police", "spawn npc", "spawn cop", "spawn soldier", "superjump", "fastrun", "fastswim", "explosiveammo",
 						"fireammo", "explosivemelee", "slidey", "moon", "slowmo", "infiniteammo", "neverwanted", "onehit", "drunk", "wanted",
-						"heal", "armor", "weapons"};
+						"heal", "armor", "weapons", "traffic 0", "traffic 1", "traffic 3", "crowds 0", "crowds 3", "blackout", "freezetime", "clear",
+						"flip", "fix", "boost", "sethome", "home", "tp", "skyfall", "ragdoll", "help"};
 					for (String k : all) {
 						if (k.startsWith(typed)) {
 							builder.suggest(k);
@@ -192,8 +220,34 @@ public class Passthrough implements ModInitializer {
 				return 1;
 			}));
 			// flying on or off (only on with /fly: a jump tapped twice doesn't start it)
+			// the starter kit again
+			dispatcher.register(Commands.literal("kit").executes(context -> {
+				ServerPlayer player = context.getSource().getPlayer() != null ? context.getSource().getPlayer()
+					: context.getSource().getServer().getPlayerList().getPlayers().stream().findFirst().orElse(null);
+				if (player == null) {
+					return 0;
+				}
+
+				player.removeTag("passthrough_kit");
+				for (String c : KIT) {
+					context.getSource().getServer().getCommands().performPrefixedCommand(context.getSource().getServer().createCommandSourceStack(), c);
+				}
+
+				return 1;
+			}));
 			dispatcher.register(Commands.literal("fly").executes(context -> {
 				flyAllowed = !flyAllowed;
+				// (in survival too)
+				ServerPlayer flier = context.getSource().getPlayer();
+				if (flier != null && !flier.isCreative() && !flier.isSpectator()) {
+					flier.getAbilities().mayfly = flyAllowed;
+					if (!flyAllowed) {
+						flier.getAbilities().flying = false;
+					}
+
+					flier.onUpdateAbilities();
+				}
+
 				events.accept("{\"t\":\"gtacmd\",\"c\":\"fly\",\"on\":" + flyAllowed + "}");
 				context.getSource().sendSystemMessage(Component.literal(flyAllowed ? "Flying on (/fly again for off)" : "Flying off"));
 				return 1;

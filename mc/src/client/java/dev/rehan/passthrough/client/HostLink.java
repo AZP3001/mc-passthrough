@@ -147,6 +147,12 @@ public final class HostLink extends WebSocketServer {
 					TheEnd.ride(m.get("id").getAsInt(), at == null ? null : new double[] {at.get(0).getAsDouble(), at.get(1).getAsDouble(),
 						at.get(2).getAsDouble(), m.has("yaw") ? m.get("yaw").getAsDouble() : 0.0});
 				}
+				case "totem" -> WorldBridge.totem();
+				case "hostshot" -> {
+					JsonArray at = m.getAsJsonArray("pos"), dir = m.getAsJsonArray("dir");
+					WorldBridge.hostShot(at.get(0).getAsDouble(), at.get(1).getAsDouble(), at.get(2).getAsDouble(), dir.get(0).getAsDouble(),
+						dir.get(1).getAsDouble(), dir.get(2).getAsDouble(), m.has("boom") && m.get("boom").getAsBoolean());
+				}
 				case "peek" -> PassthroughClient.peek = m.has("on") && m.get("on").getAsBoolean();
 				case "portal" -> {
 					JsonArray at = m.getAsJsonArray("at");

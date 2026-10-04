@@ -58,19 +58,7 @@ public class PassthroughClient implements ClientModInitializer {
 		"gamerule show_advancement_messages false",
 		"gamerule player_movement_check false",
 		"time set noon",
-		"weather clear",
-		"clear @a",
-		"item replace entity @a hotbar.0 with minecraft:ender_pearl 16",
-		"item replace entity @a hotbar.1 with minecraft:diamond_sword",
-		"item replace entity @a hotbar.2 with minecraft:crossbow[enchantments={quick_charge:3}]",
-		"item replace entity @a hotbar.3 with minecraft:bow[enchantments={power:5,infinity:1}]",
-		"item replace entity @a hotbar.4 with minecraft:tnt 64",
-		"item replace entity @a hotbar.5 with minecraft:flint_and_steel",
-		"item replace entity @a hotbar.6 with minecraft:creeper_spawn_egg 64",
-		"item replace entity @a hotbar.7 with minecraft:grass_block 64",
-		"item replace entity @a hotbar.8 with minecraft:firework_rocket 64",
-		"give @a minecraft:arrow 64",
-		"item replace entity @a weapon.offhand with minecraft:firework_rocket[fireworks={flight_duration:3,explosions:[{shape:\"large_ball\",colors:[I;16733525,16755200],has_trail:true}]}] 64"
+		"weather clear"
 	);
 	private static boolean configured;
 	private static boolean worldRequested;
@@ -106,6 +94,7 @@ public class PassthroughClient implements ClientModInitializer {
 		ServerTickEvents.END_SERVER_TICK.register(server -> {
 			if (setupIn > 0 && --setupIn == 0) {
 				SETUP.forEach(WorldBridge::command);
+				Passthrough.KIT.forEach(WorldBridge::command); // (only for a player who hasn't had it yet)
 			}
 		});
 	}
@@ -136,10 +125,13 @@ public class PassthroughClient implements ClientModInitializer {
 		if (minecraft.player != null) {
 			int elytra = minecraft.player.getItemBySlot(EquipmentSlot.CHEST).has(DataComponents.GLIDER) ? 1 : 0;
 			int armor = minecraft.player.getArmorValue();
-			int state = elytra | (minecraft.player.isSpectator() ? 2 : 0) | (armor << 2);
-			if (state != elytraSent || ++elytraSentAt % 40 == 0) {
+			int blocking = minecraft.player.isBlocking() ? 1 : 0;
+			int totem = minecraft.player.getMainHandItem().is(Items.TOTEM_OF_UNDYING) || minecraft.player.getOffhandItem().is(Items.TOTEM_OF_UNDYING) ? 1 : 0;
+			int scope = minecraft.player.isScoping() ? 1 : 0;
+			int state = elytra | (minecraft.player.isSpectator() ? 2 : 0) | (armor << 2) | (blocking << 8) | (totem << 9) | (scope << 10);
+			if (state != elytraSent || ++elytraSentAt % 40 == 0) { // (sent at once when it changes: a shield raised counts now)
 				elytraSent = state;
-				Passthrough.events.accept("{\"t\":\"pstate\",\"ely\":" + elytra + ",\"spec\":" + ((state >> 1) & 1) + ",\"arm\":" + armor + "}");
+				Passthrough.events.accept("{\"t\":\"pstate\",\"ely\":" + elytra + ",\"spec\":" + ((state >> 1) & 1) + ",\"arm\":" + armor + ",\"blk\":" + blocking + ",\"tot\":" + totem + ",\"scope\":" + scope + "}");
 			}
 
 			// Minecraft's effects on the player (potions, beacons), felt by the host's player too

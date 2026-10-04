@@ -112,6 +112,22 @@ namespace natives
 	inline void SetPlayerWeaponDefenseModifier(Player p, float m) { invoke<Void>(0x2D83BC011CA14A3C, p, m); }
 	inline void SetPlayerMeleeWeaponDefenseModifier(Player p, float m) { invoke<Void>(0xAE540335B4ABC4E2, p, m); }
 	inline void SetPlayerVehicleDefenseModifier(Player p, float m) { invoke<Void>(0x4C60E6EFDAFF2462, p, m); }
+	inline void SetVehicleDensityMultiplierThisFrame(float m) { invoke<Void>(0x245A6883D966D537, m); }
+	inline void SetRandomVehicleDensityMultiplierThisFrame(float m) { invoke<Void>(0xB3B3359379FE77D3, m); }
+	inline void SetParkedVehicleDensityMultiplierThisFrame(float m) { invoke<Void>(0xEAE6DCC7EEE3DB1D, m); }
+	inline void SetScenarioPedDensityMultiplierThisFrame(float a, float b) { invoke<Void>(0x7A556143A1C03898, a, b); }
+	inline void SetArtificialLightsState(BOOL on) { invoke<Void>(0x1268615ACE24D504, on); }
+	inline void ClearAreaOfPeds(float x, float y, float z, float r) { invoke<Void>(0xBE31FD6CE464AC59, x, y, z, r, 1); }
+	inline void ClearAreaOfVehicles(float x, float y, float z, float r) { invoke<Void>(0x01C7B9B38428AEB6, x, y, z, r, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 0); }
+	inline void SetVehicleForwardSpeed(Vehicle v, float speed) { invoke<Void>(0xAB54A438726D25D5, v, speed); }
+	inline void SetNightvision(BOOL on) { invoke<Void>(0x18F621F7A5B1F85D, on); }
+	inline void SetVehicleAlarm(Vehicle v, BOOL on) { invoke<Void>(0xCDE5E70C1DDB954C, v, on); }
+	inline void StartVehicleAlarm(Vehicle v) { invoke<Void>(0xB8FF7AB45305C345, v); }
+	inline BOOL IsVehicleAlarmActivated(Vehicle v) { return invoke<BOOL>(0x4319E335B71FFF34, v); }
+	inline int GetVehicleNumberOfPassengers(Vehicle v) { return invoke<int>(0x24CB2137731FFE89, v, TRUE, FALSE); }
+	inline BOOL IsPedShooting(Ped p) { return invoke<BOOL>(0x34616828CD07F1A1, p); }
+	inline BOOL GetPedLastWeaponImpactCoord(Ped p, Vector3 *at) { return invoke<BOOL>(0x6C4D0409BA1A2BC2, p, at); }
+	inline int GetWeaponDamageType(Hash w) { return invoke<int>(0x3BE0BB12D25FB305, w); }
 	inline BOOL GetScreenCoordFromWorldCoord(float x, float y, float z, float *sx, float *sy) { return invoke<BOOL>(0x34E82F05DF2974F5, x, y, z, sx, sy); }
 	inline void DrawRect(float x, float y, float w, float h, int r, int g, int b, int a) { invoke<Void>(0x3A618A217E5154F0, x, y, w, h, r, g, b, a, FALSE); }
 
