@@ -51,6 +51,8 @@ namespace
 	{
 		float box[4] = {0, 0, 0, 0}, depth[3] = {0, 0, 0};
 		double pos[3] = {0, 0, 0};
+		float height = 1.8f;
+		bool seated = false;
 		bool valid = false;
 	} g_steve; // under g_poseLock
 
@@ -387,6 +389,28 @@ namespace
 		}
 		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveDepth"); v.handle != 0)
 			runtime->set_uniform_value_float(v, steve.depth[0], steve.depth[1], steve.depth[2]);
+		// where Minecraft drew Steve, in the camera it drew him with (his feet, and up): only his own pixels take his
+		// motion, and his old place is never drawn elsewhere (that showed him twice, and moved the blocks by him with him)
+		{
+			float sm[4] = {0, 0, 0, 0}, su[4] = {0, 1, 0, 0};
+			if (steve.valid && g_mcSteveValid && g_mcPose.valid)
+			{
+				float rm[3][3];
+				camera_rotation(g_mcPose, rm);
+				const float d[3] = {float(g_mcSteve[0] - g_mcPose.x), float(g_mcSteve[1] - g_mcPose.y), float(g_mcSteve[2] - g_mcPose.z)};
+				for (int i = 0; i < 3; ++i)
+				{
+					sm[i] = rm[0][i] * d[0] + rm[1][i] * d[1] + rm[2][i] * d[2];
+					su[i] = rm[1][i]; // (world up, (0, 1, 0), in that camera)
+				}
+				sm[3] = steve.height;
+				su[3] = steve.seated ? 1.0f : 0.0f;
+			}
+			if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveMc"); v.handle != 0)
+				runtime->set_uniform_value_float(v, sm[0], sm[1], sm[2], sm[3]);
+			if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveUp"); v.handle != 0)
+				runtime->set_uniform_value_float(v, su[0], su[1], su[2], su[3]);
+		}
 		const char *rows[3] = {"WarpRow0", "WarpRow1", "WarpRow2"};
 		for (int i = 0; i < 3; ++i)
 			if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, rows[i]); v.handle != 0)
@@ -494,8 +518,11 @@ namespace compositor
 		++g_hostPoseCount;
 	}
 
-	void set_steve(float x0, float y0, float x1, float y1, float near_d, float far_d, float glass_d, double x, double y, double z)
+	void set_steve(float x0, float y0, float x1, float y1, float near_d, float far_d, float glass_d, double x, double y, double z,
+		float height, bool seated)
 	{
+		g_steve.height = height;
+		g_steve.seated = seated;
 		std::lock_guard<std::mutex> lock(g_poseLock);
 		g_steve.box[0] = x0;
 		g_steve.box[1] = y0;

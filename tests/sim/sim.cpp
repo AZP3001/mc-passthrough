@@ -415,7 +415,7 @@ namespace compositor
 	void set_host_planes(float, float) {}
 	void set_host_pose(float, float, float, float, double, double, double) {}
 	void set_pose_lag(int) {}
-	void set_steve(float, float, float, float, float, float, float, double, double, double) {}
+	void set_steve(float, float, float, float, float, float, float, double, double, double, float, bool) {}
 	void set_camera_locked(bool) {}
 	void set_look(float, float, float) {}
 	void set_screen_fx(float, float, float, float) {}
@@ -749,7 +749,11 @@ int main()
 	g_look[2] = 0.0f;
 	g_kbm = false;
 
-	// the minimap's mask: on while GTA draws it, off in a cutscene (Minecraft shows there then)
+	// the minimap's mask: off by default (Minecraft's blocks show there too)
+	frame();
+	check(g_mask[2] <= g_mask[0], "no minimap mask by default");
+	// KeepMinimap=1: on while GTA draws it, off in a cutscene (Minecraft shows there then)
+	g_settings.keepMinimap = true;
 	frame();
 	check(g_mask[2] > g_mask[0], "the minimap is masked while it shows");
 	g_cutscene = true;

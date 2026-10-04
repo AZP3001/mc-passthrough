@@ -208,6 +208,8 @@ Also:
 - Compasses point to your GTA map waypoint. Hit a parked car and its alarm goes off; heavy blows jolt the screen a bit.
   A fishing rod hooks cars and loose things too. Hurt in GTA, Steve flinches and you hear it.
 - GTA's pickups (dropped money, weapons, health, armour) are collected in Minecraft movement too.
+- A trident's riptide works in GTA's water (deep water too) and in GTA's rain, even with Minecraft movement off (F6):
+  Minecraft flies you for the launch.
 - Out of breath (empty hunger bar), GTA's own sprint waits too. Water douses a burning car for good.
 
 ## Settings
@@ -219,6 +221,7 @@ Also:
 | `LookSensitivity` | `1.0` | how fast the mouse turns the view in Minecraft movement (2.0 = twice as fast) |
 | `InvertLook` | `0` | `1`: moving the mouse up looks down |
 | `FreeLook` | `1` | `1`: Minecraft movement looks all the way up and down with its own camera; `0`: GTA's camera |
+| `KeepMinimap` | `0` | `1`: Minecraft's blocks never cover GTA's minimap; `0`: they show there too |
 
 **ReShade** (Home key in GTA → `MCPassthrough.fx`) has sliders for how Minecraft looks: lighting, gamma, saturation,
 haze, glow, depth bias. `install.sh` resets them to the defaults.

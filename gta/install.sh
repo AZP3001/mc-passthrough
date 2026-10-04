@@ -51,7 +51,7 @@ clash=
 [ -z "$clash" ] || [ -n "$FORCE" ] || { echo "not replacing what is already in $GTA:$clash (FORCE=1 to replace)"; exit 1; }
 cp -v "$RUNTIME/ScriptHookV.dll" "$RUNTIME/dinput8.dll" "$BUILD/MCPassthrough.asi" "$GTA/"
 # the plugin's settings (yours stay if you changed them): mouse look in Minecraft's movement
-[ -f "$GTA/MCPassthrough.ini" ] || printf '[Minecraft]\r\n; how fast the mouse turns the view in Minecraft movement (1.0 normal, 2.0 twice as fast)\r\nLookSensitivity=1.0\r\n; 1: moving the mouse up looks down\r\nInvertLook=0\r\n; 1: Minecraft movement looks all the way up and down; 0: GTA'"'"'s own camera\r\nFreeLook=1\r\n' > "$GTA/MCPassthrough.ini"
+[ -f "$GTA/MCPassthrough.ini" ] || printf '[Minecraft]\r\n; how fast the mouse turns the view in Minecraft movement (1.0 normal, 2.0 twice as fast)\r\nLookSensitivity=1.0\r\n; 1: moving the mouse up looks down\r\nInvertLook=0\r\n; 1: Minecraft movement looks all the way up and down; 0: GTA'"'"'s own camera\r\nFreeLook=1\r\n; 1: Minecraft blocks never cover the GTA minimap (0: blocks show there too)\r\nKeepMinimap=0\r\n' > "$GTA/MCPassthrough.ini"
 # ScriptHookV's own args.txt: story mode without BattlEye (no GTA Online while it is there)
 printf -- '%s' "$ARGS" > "$GTA/args.txt"
 cp -v "$RUNTIME/ReShade64.dll" "$GTA/ReShade64.asi"

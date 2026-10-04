@@ -127,6 +127,8 @@ public final class PlayerSync {
 	 * interpolates and walks): in first person the player's eyes are at the host camera, in third person
 	 * their feet are at the host player's. While walking: the host's keys, and Minecraft's physics does the rest.
 	 */
+	private static boolean riptideSent;
+
 	public static void tick(final LocalPlayer player) {
 		HostState.Pose p = HostState.live();
 		Options options = Minecraft.getInstance().options;
@@ -174,6 +176,19 @@ public final class PlayerSync {
 		if (p == null || p.drive()) {
 			return;
 		}
+
+		// a trident's riptide launched the player (in the host's water or rain): Minecraft moves it for the flight, and the
+		// host is told so it follows (putting the player back at the host's every tick stopped the riptide dead)
+		if (player.isAutoSpinAttack()) {
+			if (!riptideSent) {
+				riptideSent = true;
+				Passthrough.events.accept("{\"t\":\"riptide\"}");
+			}
+
+			return;
+		}
+
+		riptideSent = false;
 
 		double x = p.firstPerson() ? p.x() : p.px();
 		double y = p.firstPerson() ? p.y() - player.getEyeHeight() : p.py();

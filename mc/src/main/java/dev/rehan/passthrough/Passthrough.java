@@ -37,6 +37,8 @@ public class Passthrough implements ModInitializer {
 	public static volatile boolean walking;
 	/** /fly: Minecraft's movement flies (Space up, Ctrl down), and a car flies with Space twice; off: neither. */
 	public static volatile boolean flyAllowed;
+	/** It rains in the host's world where the player is (a trident's riptide works in it, as in Minecraft's rain). */
+	public static volatile boolean hostRain;
 	/** An item's enchantment levels over Minecraft's 255 (/enchant): its custom data, by the enchantment's id path. */
 	public static final String OVER_LEVELS = "passthrough_enchants";
 	/**

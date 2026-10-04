@@ -67,6 +67,7 @@ namespace
 		int psetId = 0;          // the last position GTA put Minecraft's player at (Minecraft echoes it)
 		int fellAt = -100000;    // when Minecraft's player last fell through GTA's floor
 		Ped frozen = 0;          // the ped frozen for it (a character switch hands another one over)
+		int forceUntil = 0;      // Minecraft moves the player until then whatever (a trident's riptide launched it)
 		float ex = 0, ey = 0, ez = 0; // where the player is drawn: carried by Minecraft's velocity every frame, eased onto
 		bool haveEst = false;         // its samples (they come 20 times a second, unevenly: snapping to each stuttered)
 		int64_t estAt = 0;
@@ -92,6 +93,7 @@ namespace
 		float lookSensitivity = 1.0f;
 		bool invertLook = false;
 		bool freeLook = true;
+		bool keepMinimap = false; // Minecraft's world never covers GTA's minimap (off: blocks show there too)
 	} g_settings;
 	int g_spaceDownAt = INT_MAX; // Space held since then (held at a ledge too high to jump, GTA climbs it)
 	// A car flying with Steve (Minecraft's movement on, in the driver's seat, Space twice): Minecraft flies the player
@@ -466,7 +468,14 @@ namespace
 			// Minecraft column (x, z) covers GTA x in [x, x+1) and y in (-z-1, -z]: probe its centre
 			const float cx = x + 0.5f, cy = -(z + 0.5f);
 			if (!natives::GetGroundZFor3dCoord(cx, cy, feet + 1.2f, &groundZ, TRUE, FALSE) || groundZ == 0.0f)
-				continue; // collision not streamed in yet: try again later
+			{
+				// no seabed found under deep water (the open sea, a deep dock: GTA hasn't its bottom loaded): still water to
+				// Minecraft, over a bed well down (Minecraft swims and its trident's riptide works there too)
+				float sea = 0.0f;
+				if (!natives::GetWaterHeight(cx, cy, feet + 20.0f, &sea) || sea < feet - 6.0f)
+					continue; // collision not streamed in yet: try again later
+				groundZ = std::min(sea, feet) - 14.0f;
+			}
 			g_sampled[column_key(x, z)] = feet;
 			const int top = int(std::floor(groundZ + g_yOffset + 0.5f)) - 1;
 			// something standing on the ground here, up to a mob's height (not a car: they drive off): its top, or a
@@ -883,8 +892,21 @@ namespace
 	/// a bullet breaks it (a pane in the world, a car's window).
 	void break_glass(Ped ped, const Vector3 &at, float ux, float uy, float uz, Entity entity)
 	{
-		// a bullet's worth of breakage where it was hit, a car's window too (not the whole pane smashed)
-		(void)entity;
+		// a car's window: a side or rear one shatters (as a bullet does it), a windscreen cracks where it's hit (a real
+		// bullet's worth: a token one didn't break car glass)
+		if (entity != 0 && natives::GetEntityType(entity) == 2)
+		{
+			const int w = nearest_window(entity, at.x, at.y, at.z, 1.5f);
+			if (w >= 0 && w != 6 && w != 7)
+			{
+				natives::SmashVehicleWindow(entity, w);
+				return;
+			}
+			natives::ShootSingleBulletBetweenCoords(at.x - ux * 0.4f, at.y - uy * 0.4f, at.z - uz * 0.4f, at.x + ux * 0.25f, at.y + uy * 0.25f,
+				at.z + uz * 0.25f, 25, kPistol, ped, FALSE);
+			return;
+		}
+		// a pane in the world: a bullet's worth of breakage where it was hit
 		natives::ShootSingleBulletBetweenCoords(at.x - ux * 0.4f, at.y - uy * 0.4f, at.z - uz * 0.4f, at.x + ux * 0.4f, at.y + uy * 0.4f,
 			at.z + uz * 0.4f, 1, kPistol, ped, FALSE);
 	}
@@ -2702,10 +2724,10 @@ namespace
 			{
 				const Vector3 c = natives::GetEntityCoords(v, TRUE);
 				const float wx = c.x - at.x, wy = c.y - at.y, wz = c.z - at.z, wl = std::max(0.1f, std::sqrt(wx * wx + wy * wy + wz * wz));
-				const int w = nearest_window(v, at.x, at.y, at.z + 0.3f, 1.2f);
-				if (w >= 0)
-					natives::ShootSingleBulletBetweenCoords(at.x - wx / wl * 0.5f, at.y - wy / wl * 0.5f, at.z + 0.35f - wz / wl * 0.5f,
-						at.x + wx / wl * 0.6f, at.y + wy / wl * 0.6f, at.z + 0.35f + wz / wl * 0.6f, 1, kPistol, ped, FALSE);
+				Vector3 glassAt = at;
+				glassAt.z += 0.3f;
+				if (nearest_window(v, glassAt.x, glassAt.y, glassAt.z, 1.2f) >= 0)
+					break_glass(ped, glassAt, wx / wl, wy / wl, wz / wl, v);
 			}
 		};
 		each_vehicle_near(me.x, me.y, me.z, reach + 2.5f, [&](Vehicle v, float dx, float dy, float) {
@@ -3528,6 +3550,12 @@ namespace
 				mobhit_message(natives::PlayerPedId(), message);
 			return;
 		}
+		if (type == "riptide")
+		{
+			// a trident's riptide launched Minecraft's player: Minecraft moves it for the flight, GTA's player follows
+			g_walk.forceUntil = natives::GetGameTimer() + 3500;
+			return;
+		}
 		if (type == "bowdraw")
 		{
 			g_bowDrawn = message.find("\"on\":true") != std::string::npos;
@@ -3963,7 +3991,8 @@ namespace
 			natives::TheFeedHideThisFrame();
 			natives::HideHelpTextThisFrame();
 		}
-		if (!g_showHud || scene || g_noInput || natives::IsRadarHidden() || natives::IsHudHidden() || !natives::IsMinimapRendering())
+		if (!g_settings.keepMinimap || !g_showHud || scene || g_noInput || natives::IsRadarHidden() || natives::IsHudHidden() ||
+			!natives::IsMinimapRendering())
 		{
 			compositor::set_hud_mask(0.0f, 0.0f, 0.0f, 0.0f);
 			return;
@@ -4271,13 +4300,18 @@ namespace
 		g_proxy.ceilings.clear();
 		g_proxy.floorBase = -100000.0f;
 		proxy_tick(ped, true);
-		walk_correct(false);
+		// (a riptide's flight has begun in Minecraft from where GTA's player is: putting it there again would stop it)
+		if (natives::GetGameTimer() >= g_walk.forceUntil)
+			walk_correct(false);
+		else
+			g_walk.acked = true;
 	}
 
 	/// Whether Minecraft should move the player now: on foot, in control, and none of what GTA does itself.
 	bool walk_wanted(Ped ped)
 	{
-		if (!g_mcMove || g_gtaHands || g_drive.on || g_carFly.on || natives::GetGameTimer() < g_walk.gtaUntil)
+		const bool forced = natives::GetGameTimer() < g_walk.forceUntil; // (a riptide flight: Minecraft's, even with F6 off)
+		if ((!g_mcMove && !forced) || g_gtaHands || g_drive.on || g_carFly.on || natives::GetGameTimer() < g_walk.gtaUntil)
 			return false;
 		if (!natives::IsPlayerControlOn(natives::PlayerId()) || !natives::IsPedOnFoot(ped) || natives::IsPedInAnyVehicle(ped, FALSE) ||
 			natives::IsPedGettingIntoAVehicle(ped))
@@ -5967,11 +6001,11 @@ namespace
 
 	/// Where Steve is on screen this frame, for the compositor: his box (the character's, a little wider: Steve's
 	/// blocky), how deep he is along the camera, and glass between him and the camera (a car's window, a shop's).
-	void steve_region(Ped ped, const Vector3 &c, const Vector3 &r, float sx, float sy, float sz, bool show)
+	void steve_region(Ped ped, const Vector3 &c, const Vector3 &r, float sx, float sy, float sz, bool show, bool seated = false)
 	{
 		if (!show)
 		{
-			compositor::set_steve(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+			compositor::set_steve(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.8f, false);
 			return;
 		}
 		const float d2r = 3.14159265f / 180.0f, ht = g_steveHeight;
@@ -5997,7 +6031,7 @@ namespace
 		}
 		if (df <= 0.0f)
 		{
-			compositor::set_steve(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+			compositor::set_steve(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.8f, false);
 			return;
 		}
 		if (behind)
@@ -6015,7 +6049,7 @@ namespace
 				glass = (end.x - c.x) * fx + (end.y - c.y) * fy + (end.z - c.z) * fz;
 		}
 		compositor::set_steve(std::max(0.0f, x0 - 0.02f), std::max(0.0f, y0 - 0.02f), std::min(1.0f, x1 + 0.02f), std::min(1.0f, y1 + 0.02f),
-			std::max(0.0f, dn), df, glass, sx, sz + g_yOffset, -sy);
+			std::max(0.0f, dn), df, glass, sx, sz + g_yOffset, -sy, ht, seated);
 	}
 
 	bool rig_pose(Ped who, bool seated, Rig &out)
@@ -6160,6 +6194,7 @@ namespace
 		g_settings.lookSensitivity = std::clamp(float(std::atof(value)), 0.05f, 10.0f);
 		g_settings.invertLook = GetPrivateProfileIntA("Minecraft", "InvertLook", 0, path) != 0;
 		g_settings.freeLook = GetPrivateProfileIntA("Minecraft", "FreeLook", 1, path) != 0;
+		g_settings.keepMinimap = GetPrivateProfileIntA("Minecraft", "KeepMinimap", 0, path) != 0;
 	}
 
 	float g_lastX = 0.0f, g_lastY = 0.0f;
@@ -6462,8 +6497,8 @@ namespace
 			// GTA's health, armour and stamina, for Minecraft's hearts, armour and hunger bars
 			const int hp = std::max(0, natives::GetEntityHealth(ped) - 100), hpMax = std::max(1, natives::GetEntityMaxHealth(ped) - 100);
 			char bars[128];
-			snprintf(bars, sizeof(bars), ",\"hp\":[%d,%d],\"ar\":%d,\"st\":%.1f,\"fly\":%s,\"ht\":%.3f", hp, hpMax, natives::GetPedArmour(ped),
-				g_stamina, g_carFly.on ? "true" : "false", g_steveHeight);
+			snprintf(bars, sizeof(bars), ",\"hp\":[%d,%d],\"ar\":%d,\"st\":%.1f,\"fly\":%s,\"ht\":%.3f,\"rain\":%.2f", hp, hpMax,
+				natives::GetPedArmour(ped), g_stamina, g_carFly.on ? "true" : "false", g_steveHeight, natives::GetRainLevel());
 			sendf("{\"t\":\"cam\",\"f\":%d,\"p\":[%.4f,%.4f,%.4f],\"r\":[%.3f,%.3f,%.3f],\"fov\":%.3f,\"fp\":%s,\"pl\":[%.4f,%.4f,%.4f],\"h\":%.3f,"
 				  "\"gun\":%s,\"veh\":%s,\"sn\":%s,\"aim\":[%.3f,%.3f,%.3f],\"aimOn\":%s,\"walk\":%s,\"in\":%d,\"dead\":%s,"
 				  "\"gh\":[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f],\"ghOn\":%s,\"ctl\":%s%s%s}",
@@ -6473,7 +6508,7 @@ namespace
 				g_walk.on || g_carFly.on ? "true" : "false", input, dead ? "true" : "false", bp[0], bp[1], bp[2], bp[3], bp[4], bp[5], hasBlock ? "true" : "false",
 				control ? "true" : "false", rigJson, bars);
 			// (first person: Minecraft puts its player's eyes at the camera, so its feet are 1.62 m under it)
-			steve_region(ped, c, r, sx, sy, sz, !firstPerson); // (first person: Steve isn't drawn)
+			steve_region(ped, c, r, sx, sy, sz, !firstPerson, sit && !g_carFly.on); // (first person: Steve isn't drawn)
 		}
 
 		// no camera motion blur (explosions smear GTA's picture, Minecraft's stays sharp: the two look apart)

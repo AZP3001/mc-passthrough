@@ -88,6 +88,10 @@ uniform float3 WarpT = float3(0.0, 0.0, 0.0);
 uniform float3 SteveT = float3(0.0, 0.0, 0.0);
 uniform float4 SteveBox = float4(0.0, 0.0, 0.0, 0.0);
 uniform float3 SteveDepth = float3(0.0, 0.0, 0.0);
+// Set by the add-on: Steve's feet where Minecraft drew him, in the camera it drew him with (xyz; w: his height, 0 none), and
+// world up in that camera (xyz; w: 1 when he sits in a car).
+uniform float4 SteveMc = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 SteveUp = float4(0.0, 1.0, 0.0, 0.0);
 uniform float SteveBias < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.01; ui_label = "Steve's depth allowance (m)";
 	ui_tooltip = "How far behind GTA's surfaces Steve may still show (he's wider than GTA's character)."; > = 0.2;
 uniform float MarchThickness < ui_type = "drag"; ui_min = 0.05; ui_max = 3.0; ui_step = 0.05; ui_label = "Re-projection thickness (m)";
@@ -216,12 +220,13 @@ bool mc_sample(float3 p, float3 T, out float2 n, out float behind)
 /// (rotation, and translation T): where it first goes behind Minecraft's surface, Minecraft is seen. The crossing is
 /// found exactly (bisection) and must be a real one: a ray that only gets behind a thin thing (Steve's edge, a post)
 /// far beyond it sees past it (taking that as a hit smeared thin things across the screen as the camera moved).
-bool march(float3 ray, float3 T, float zFar, out float2 muv, out float zm)
+bool march(float3 ray, float3 T, float zFar, out float2 muv, out float zm, out float3 qm)
 {
 	const float2 mcScale = float2(WarpTan.y * WarpTan.z, WarpTan.y);
 	const float zNear = 0.2;
 	muv = 0.0;
 	zm = 1e9;
+	qm = 0.0;
 	float prev = zNear;
 	[loop] for (int i = 0; i < 32; ++i)
 	{
@@ -254,6 +259,10 @@ bool march(float3 ray, float3 T, float zFar, out float2 muv, out float zm)
 		// settle on the surface (fixed point on the surface point's GTA depth)
 		float zg = hi;
 		float2 ndc = n;
+		{
+			const float3 ph = ray * hi;
+			qm = float3(dot(WarpRow0, ph), dot(WarpRow1, ph), dot(WarpRow2, ph)) + T;
+		}
 		[loop] for (int k = 0; k < 3; ++k)
 		{
 			const float3 pk = ray * zg;
@@ -267,7 +276,8 @@ bool march(float3 ray, float3 T, float zFar, out float2 muv, out float zm)
 			if (zk > 1e8)
 				break;
 			ndc = nk;
-			const float3 q = float3(nk * mcScale, -1.0) * zk - T;
+			qm = float3(nk * mcScale, -1.0) * zk; // (the point found, in Minecraft's camera)
+			const float3 q = qm - T;
 			zg = -(q.x * WarpRow0.z + q.y * WarpRow1.z + q.z * WarpRow2.z);
 		}
 		muv = ndc * 0.5 + 0.5;
@@ -275,6 +285,18 @@ bool march(float3 ray, float3 T, float zFar, out float2 muv, out float zm)
 		return true;
 	}
 	return false;
+}
+
+/// How high over Steve's feet a point of Minecraft's frame (its camera's space) is, or -1 if it isn't on Steve (outside his
+/// body's column: a little wider than him).
+float on_steve(float3 qm)
+{
+	if (SteveMc.w <= 0.0)
+		return -1.0;
+	const float3 d = qm - SteveMc.xyz;
+	const float h = dot(d, SteveUp.xyz);
+	const float3 side = d - SteveUp.xyz * h;
+	return h > -0.25 && h < SteveMc.w + 0.35 && dot(side, side) < 0.6 * 0.6 ? max(h, 0.0) : -1.0;
 }
 
 void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 outColor : SV_Target0, out float4 outInfo : SV_Target1)
@@ -296,6 +318,7 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 	// how far behind GTA's surface Minecraft may still show: more where that surface is seen at a grazing angle
 	const float allow = min(DepthBias + SlopeBias * abs(ddy(zh)), max(MaxBias, DepthBias));
 	float zm = 1e9;
+	float steveH = -1.0; // how high on Steve this pixel is (-1: not Steve)
 	if (Reproject)
 	{
 		const float3 ray = float3((uv.x * 2.0 - 1.0) * WarpTan.x * BUFFER_WIDTH * BUFFER_RCP_HEIGHT, (1.0 - uv.y * 2.0) * WarpTan.x, -1.0);
@@ -304,19 +327,33 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 		// Steve moves with the camera (it follows him, a car carries both): his part of the picture moves by the camera's
 		// motion less his own, and only counts where it lands on him
 		const bool inBox = SteveBox.z > SteveBox.x && uv.x >= SteveBox.x && uv.x <= SteveBox.z && uv.y >= SteveBox.y && uv.y <= SteveBox.w;
+		float3 qm;
 		if (inBox)
 		{
 			float2 sm;
 			float sz;
-			if (march(ray, SteveT, zFar, sm, sz) && sz > SteveDepth.x - 0.4 && sz < SteveDepth.y + 0.4)
+			if (march(ray, SteveT, zFar + 1.5, sm, sz, qm) && sz > SteveDepth.x - 0.4 && sz < SteveDepth.y + 0.4)
 			{
-				muv = sm;
-				zm = sz;
-				inside = true;
+				steveH = on_steve(qm);
+				if (steveH >= 0.0)
+				{
+					muv = sm;
+					zm = sz;
+					inside = true;
+				}
 			}
 		}
 		if (!inside)
-			inside = march(ray, WarpT, zFar, muv, zm);
+		{
+			inside = march(ray, WarpT, zFar, muv, zm, qm);
+			// Steve's old place (where Minecraft drew him) moved by the camera alone: not him (he's drawn above where he
+			// is now). It showed him twice.
+			if (inside && on_steve(qm) >= 0.0)
+			{
+				inside = false;
+				zm = 1e9;
+			}
+		}
 	}
 	float4 world = inside ? tex2D(sWorld, muv) : 0.0;
 	// Minecraft's blocks and mobs are solid: only its own see-through things (water, glass, ice) and the edges blend
@@ -344,9 +381,11 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 
 	// Steve: a little more depth allowance (his blocky shape is wider than GTA's character, in a car's seat too), and
 	// glass in front of him (a car's window, a shop's) doesn't hide him
-	const bool steve = SteveBox.z > SteveBox.x && uv.x >= SteveBox.x && uv.x <= SteveBox.z && uv.y >= SteveBox.y && uv.y <= SteveBox.w
-		&& zm > SteveDepth.x - 0.4 && zm < SteveDepth.y + 0.4;
-	const bool glass = steve && SteveDepth.z > 0.0 && abs(zh - SteveDepth.z) < 0.6 && zm > zh;
+	const bool steve = steveH >= 0.0;
+	// glass in front of him (a shop's window); and in a car's seat, above his waist, whatever of the car is close in front
+	// of him (its windows, an open door's glass, the pillars): the car's own people show there too
+	const bool glass = steve && zm > zh && ((SteveDepth.z > 0.0 && abs(zh - SteveDepth.z) < 0.6) ||
+		(SteveUp.w > 0.5 && steveH > SteveMc.w * 0.42 && zm - zh < 1.4));
 	const float visible = zm < zh + (steve ? max(allow, SteveBias) : allow) || glass ? 1.0 : 0.0;
 	const float cover = world.a * visible;
 	// (relit as straight colour, then put back over GTA's by its coverage)
