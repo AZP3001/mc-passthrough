@@ -286,6 +286,22 @@ namespace natives
 	// Steve in cutscenes: the cutscene's copy of the player's character, and where a ped's feet and hips are.
 	inline Entity GetEntityIndexOfCutsceneEntity(const char *name, Hash model) { return invoke<Entity>(0x0A2E9FDB9A8C62F6, name, model); }
 	inline Vector3 GetPedBoneCoords(Ped p, int bone) { return invoke<Vector3>(0x17C07FC640E86B4E, p, bone, 0.0f, 0.0f, 0.0f); }
+	// Cutscenes, loading screens and missions taking control (Minecraft gets no input then); the minimap.
+	inline BOOL IsCutscenePlaying() { return invoke<BOOL>(0xD3C2E180A40F031E); }
+	inline BOOL GetIsLoadingScreenActive() { return invoke<BOOL>(0x10D0A8F259E93EC9); }
+	inline BOOL IsScreenFadingOut() { return invoke<BOOL>(0x797AC7CB535BA28F); }
+	inline BOOL IsScreenFadingIn() { return invoke<BOOL>(0x5C544BC6C57AC575); }
+	inline BOOL IsWarningMessageActive() { return invoke<BOOL>(0xE18B138FABC53103); }
+	inline BOOL IsMinimapRendering() { return invoke<BOOL>(0xAF754F20EB5CD51A); }
+	// Arrows in tyres.
+	inline void SetVehicleTyreBurst(Vehicle v, int index, BOOL onRim, float damage) { invoke<Void>(0xEC6A202EE4960385, v, index, onRim, damage); }
+	inline BOOL GetVehicleTyresCanBurst(Vehicle v) { return invoke<BOOL>(0x678B9BB8C3F58FEB, v); }
+	inline BOOL IsVehicleTyreBurst(Vehicle v, int wheel, BOOL completely) { return invoke<BOOL>(0xBA291848A0815CA9, v, wheel, completely); }
+	// Minecraft's free look (a camera of our own while Minecraft moves the player).
+	inline float GetDisabledControlUnboundNormal(int group, int control) { return invoke<float>(0x4F8A26A890FD62FB, group, control); }
+	inline BOOL IsUsingKeyboardAndMouse() { return invoke<BOOL>(0xA571D46727E2B718, 2); }
+	inline void SetCamNearClip(Cam c, float nearClip) { invoke<Void>(0xC7848EFCCC545182, c, nearClip); }
+	inline void SetCamAffectsAiming(Cam c, BOOL affects) { invoke<Void>(0x8C1DC7770C51DC8D, c, affects); }
 
 	inline void Notify(const char *text)
 	{

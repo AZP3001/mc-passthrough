@@ -63,5 +63,18 @@ inline UINT MapVirtualKeyW(UINT, UINT) { return 0; }
 inline BOOL GetKeyboardState(BYTE *) { return FALSE; }
 inline int ToUnicodeEx(UINT, UINT, const BYTE *, wchar_t *, int, UINT, HKL) { return 0; }
 inline HKL GetKeyboardLayout(DWORD) { return nullptr; }
+#define MAX_PATH 260
+// MCPassthrough.ini: none in the simulator (the defaults apply)
+inline DWORD GetModuleFileNameA(HMODULE, char *path, DWORD size)
+{
+	snprintf(path, size, "MCPassthrough.asi");
+	return DWORD(strlen(path));
+}
+inline DWORD GetPrivateProfileStringA(const char *, const char *, const char *def, char *out, DWORD size, const char *)
+{
+	snprintf(out, size, "%s", def);
+	return DWORD(strlen(out));
+}
+inline UINT GetPrivateProfileIntA(const char *, const char *, int def, const char *) { return UINT(def); }
 int sim_sscanf_s(const char *str, const char *fmt, ...);
 #define sscanf_s sim_sscanf_s

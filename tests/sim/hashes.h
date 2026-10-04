@@ -222,4 +222,17 @@
 #define H_GetWorldPositionOfEntityBone 0x44A8FCB8ED227738ull
 #define H_GetEntityIndexOfCutsceneEntity 0x0A2E9FDB9A8C62F6ull
 #define H_GetPedBoneCoords 0x17C07FC640E86B4Eull
+#define H_IsCutscenePlaying 0xD3C2E180A40F031Eull
+#define H_GetIsLoadingScreenActive 0x10D0A8F259E93EC9ull
+#define H_IsScreenFadingOut 0x797AC7CB535BA28Full
+#define H_IsScreenFadingIn 0x5C544BC6C57AC575ull
+#define H_IsWarningMessageActive 0xE18B138FABC53103ull
+#define H_IsMinimapRendering 0xAF754F20EB5CD51Aull
+#define H_SetVehicleTyreBurst 0xEC6A202EE4960385ull
+#define H_GetVehicleTyresCanBurst 0x678B9BB8C3F58FEBull
+#define H_IsVehicleTyreBurst 0xBA291848A0815CA9ull
+#define H_GetDisabledControlUnboundNormal 0x4F8A26A890FD62FBull
+#define H_IsUsingKeyboardAndMouse 0xA571D46727E2B718ull
+#define H_SetCamNearClip 0xC7848EFCCC545182ull
+#define H_SetCamAffectsAiming 0x8C1DC7770C51DC8Dull
 #define H_Notify 0x202709F4C58A0424ull

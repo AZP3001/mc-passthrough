@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <array>
 #include <deque>
 #include <functional>
 #include <map>
@@ -12,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include "/root/ugm/examples/minecraft-gta5-passthrough/gta/src/script.cpp"
+#include "../../gta/src/script.cpp"
 #include "hashes.h"
 
 int sim_sscanf_s(const char *str, const char *fmt, ...)
@@ -68,6 +69,29 @@ int64_t g_nanos = 1000000000LL;
 int g_ms = 10000, g_frame = 0;
 float g_camHeading = 0, g_camPitch = 0;
 bool g_cutscene = false;
+int g_playerPed = 1;                 // PLAYER_PED_ID (a character switch changes it)
+std::map<int, bool> g_visible;       // SET_ENTITY_VISIBLE
+std::map<int, bool> g_frozenOf;      // FREEZE_ENTITY_POSITION, any entity
+bool g_kbm = false;                  // IS_USING_KEYBOARD_AND_MOUSE
+std::map<int, float> g_look;         // GET_DISABLED_CONTROL_UNBOUND_NORMAL by control
+float g_mask[4] = {};                // the compositor's minimap mask
+// a standing person's bones (facing north, GTA's +y), relative to the root (1 m over the feet)
+const std::map<int, std::array<float, 3>> kBones = {
+	{0x2E28, {0.0f, 0.0f, 0.0f}},       // pelvis
+	{0x9995, {0.0f, 0.02f, 0.55f}},     // neck
+	{0x796E, {0.0f, 0.03f, 0.62f}},     // head
+	{0xB1C5, {-0.18f, 0.0f, 0.45f}},    // left upper arm
+	{0x9D4D, {0.18f, 0.0f, 0.45f}},     // right upper arm
+	{0x49D9, {-0.22f, 0.0f, -0.12f}},   // left hand
+	{0xDEAD, {0.22f, 0.0f, -0.12f}},    // right hand
+	{0xE39F, {-0.1f, 0.0f, -0.05f}},    // left thigh
+	{0xCA72, {0.1f, 0.0f, -0.05f}},     // right thigh
+	{0x3779, {-0.1f, 0.0f, -0.91f}},    // left foot
+	{0xCC4D, {0.1f, 0.0f, -0.91f}},     // right foot
+	{0x62AC, {-0.032f, 0.09f, 0.74f}},  // left eye
+	{0x6B52, {0.032f, 0.09f, 0.74f}},   // right eye
+	{0x4ED2, {0.0f, 0.1f, 0.68f}},      // upper lip (straight below the eyes: the head looks level after its tilt)
+};
 struct SimCar
 {
 	bool on = false;
@@ -196,7 +220,7 @@ PUINT64 nativeCall()
 	std::memset(g_ret, 0, sizeof(g_ret));
 	const UINT64 h = g_hash;
 	if (h == H_PlayerPedId)
-		retI(1);
+		retI(g_playerPed);
 	else if (h == H_GetEntityCoords)
 	{
 		if (I(0) == 1)
@@ -222,7 +246,42 @@ PUINT64 nativeCall()
 	{
 		if (I(0) == 1)
 			g_sped.frozen = I(1) != 0;
+		g_frozenOf[I(0)] = I(1) != 0;
 	}
+	else if (h == H_SetEntityVisible)
+		g_visible[I(0)] = I(1) != 0;
+	else if (h == H_CreateCam)
+		retI(77);
+	else if (h == H_DoesEntityExist)
+		retI(I(0) != 0);
+	else if (h == H_SetCamRot)
+	{
+		// the free-look camera: what renders (the simulator has one camera for both)
+		g_camPitch = F(1);
+		g_camHeading = F(3);
+	}
+	else if (h == H_IsUsingKeyboardAndMouse)
+		retI(g_kbm);
+	else if (h == H_GetDisabledControlUnboundNormal)
+		retF(g_look[I(1)]);
+	else if (h == H_IsMinimapRendering)
+		retI(1);
+	else if (h == H_GetPedBoneCoords)
+	{
+		const auto b = kBones.find(I(1));
+		if (b != kBones.end())
+			retV(g_sped.x + b->second[0], g_sped.y + b->second[1], g_sped.z + b->second[2]);
+		else
+			retV(g_sped.x, g_sped.y, g_sped.z);
+	}
+	else if (h == H_GetEntityBoneIndexByName)
+		retI(I(0) == 70 && std::string(P<const char>(1)) == "wheel_lf" ? 3 : -1);
+	else if (h == H_GetWorldPositionOfEntityBone)
+		retV(g_car.x - 0.8f, g_car.y + 1.3f, g_car.z - 0.5f); // (wheel_lf)
+	else if (h == H_GetVehicleTyresCanBurst)
+		retI(1);
+	else if (h == H_SetVehicleTyreBurst)
+		g_calls.push_back("TyreBurst:" + std::to_string(I(1)));
 	else if (h == H_SetEntityHeading)
 		g_sped.heading = F(1);
 	else if (h == H_GetEntityHeading)
@@ -344,7 +403,13 @@ namespace compositor
 	bool try_register(void *) { return true; }
 	void unregister(void *) {}
 	void set_active(bool) {}
-	void set_hud_mask(float, float, float, float) {}
+	void set_hud_mask(float x0, float y0, float x1, float y1)
+	{
+		g_mask[0] = x0;
+		g_mask[1] = y0;
+		g_mask[2] = x1;
+		g_mask[3] = y1;
+	}
 	void set_cursor(float, float, bool) {}
 	void set_host_planes(float, float) {}
 	void set_host_pose(float, float, float, float, double, double, double) {}
@@ -445,6 +510,14 @@ static void frame()
 	++g_frame;
 }
 
+/// The player turns to face GTA heading `h` (the free-look camera while it's on, GTA's own camera otherwise).
+static void look(float h)
+{
+	g_camHeading = h;
+	if (g_walkCam.cam != 0)
+		g_walkCam.heading = h;
+}
+
 static int count_out(const char *needle)
 {
 	int n = 0;
@@ -489,7 +562,7 @@ int main()
 	check(hcs == 1 && hcFloor, "collision boxes sent, the floor's top at Minecraft y 10.00");
 
 	// walking east (GTA heading -90, Minecraft yaw 270) into the wall at x 5: Minecraft walks through, GTA stops it
-	g_camHeading = -90.0f;
+	look(-90.0f);
 	g_pressed = {32};
 	float maxX = -100;
 	int corrections = 0;
@@ -519,15 +592,26 @@ int main()
 		frame();
 	check(std::fabs(g_sped.x - (-4.3f)) < 0.1f, "GTA's player follows a short Minecraft teleport");
 
-	// Space facing the 2 m ledge 0.7 m away: GTA climbs it
-	g_camHeading = 90.0f; // west
+	// Space tapped facing the 2 m ledge 0.7 m away: only Minecraft's jump
+	look(90.0f); // west
 	g_calls.clear();
 	g_justPressed = {22};
 	g_pressed = {22};
 	frame();
 	g_pressed.clear();
+	frame();
 	bool climbed = std::find(g_calls.begin(), g_calls.end(), "TaskClimb") != g_calls.end();
-	check(climbed, "Space at a 2 m ledge: GTA climbs it (TaskClimb)");
+	check(!climbed && g_walk.on, "Space tapped at a 2 m ledge: just Minecraft's jump (no GTA climb)");
+	// Space held there: GTA climbs it
+	g_justPressed = {22};
+	g_pressed = {22};
+	for (int i = 0; i < 30 && !climbed; ++i)
+	{
+		frame();
+		climbed = std::find(g_calls.begin(), g_calls.end(), "TaskClimb") != g_calls.end();
+	}
+	g_pressed.clear();
+	check(climbed, "Space held at a 2 m ledge: GTA climbs it (TaskClimb)");
 	check(!g_walk.on && !g_sped.frozen, "GTA has the player (unfrozen) while it climbs");
 	int back = -1;
 	for (int i = 0; i < 120 && back < 0; ++i)
@@ -543,14 +627,15 @@ int main()
 	g_mc.z = -4.4; // GTA y 4.4
 	for (int i = 0; i < 5; ++i)
 		frame();
-	g_camHeading = 0.0f; // north
+	look(0.0f); // north
 	g_calls.clear();
 	g_justPressed = {22};
 	g_pressed = {22};
-	frame();
+	for (int i = 0; i < 30; ++i)
+		frame();
 	g_pressed.clear();
 	climbed = std::find(g_calls.begin(), g_calls.end(), "TaskClimb") != g_calls.end();
-	check(!climbed && g_walk.on, "Space at a 1 m wall: no GTA climb (Minecraft's jump does it)");
+	check(!climbed && g_walk.on, "Space held at a 1 m wall: no GTA climb (Minecraft's jump does it)");
 	check(count_out("\"in\":16") > 0, "the jump key goes to Minecraft");
 
 	// a mission moves GTA's player: Minecraft's goes there too
@@ -621,17 +706,134 @@ int main()
 	// a door in the way: pushed open while walking into it
 	g_world.push_back({g_sped.x + 0.5f, g_sped.y - 0.5f, 10.4f, g_sped.x + 0.6f, g_sped.y + 0.5f, 12.4f, 50});
 	g_types[50] = 3;
-	g_camHeading = -90.0f;
+	look(-90.0f);
 	g_calls.clear();
 	g_pressed = {32};
 	frame();
 	g_pressed.clear();
 	check(std::find(g_calls.begin(), g_calls.end(), "ApplyForce:50") != g_calls.end(), "walking into a door pushes it");
 
+	// Shift sprints (no sneaking)
+	g_pressed = {21};
+	frame();
+	g_pressed.clear();
+	check(count_out("\"in\":64") > 0, "Shift: Minecraft sprints (no sneak bit)");
+
+	// free look: the mouse looks all the way down (GTA's own camera stops well short)
+	check(g_walkCam.cam != 0, "Minecraft's free look renders while Minecraft moves the player");
+	g_kbm = true;
+	g_look[2] = 40.0f;
+	frame();
+	g_look[2] = 0.0f;
+	check(g_walkCam.pitch < -89.0f && count_out(",89.500,") > 0, "the mouse looks straight down (pitch -89.5, Minecraft 89.5)");
+	g_look[2] = -60.0f;
+	frame();
+	g_look[2] = 0.0f;
+	check(g_walkCam.pitch > 89.0f, "and straight up");
+	g_look[2] = 15.0f;
+	frame();
+	g_look[2] = 0.0f;
+	g_kbm = false;
+
+	// the minimap's mask: on while GTA draws it, off in a cutscene (Minecraft shows there then)
+	frame();
+	check(g_mask[2] > g_mask[0], "the minimap is masked while it shows");
+	g_cutscene = true;
+	frame();
+	check(!(g_mask[2] > g_mask[0]), "no mask in a cutscene");
+	check(count_out("\"k\":\"attack\",\"down\":false") == 1 && count_out("\"k\":\"use\",\"down\":false") == 1,
+		"a cutscene lets go of Minecraft's attack and use");
+	check(count_out("\"ctl\":false") > 0, "and tells Minecraft it gets no input");
+	frame();
+	check(count_out("\"k\":\"attack\"") == 0, "(once)");
+	g_justPressed = {24};
+	frame();
+	check(count_out("\"k\":\"attack\",\"down\":true") == 0, "no clicks reach Minecraft in a cutscene");
+	g_cutscene = false;
+	frame();
+	check(count_out("\"ctl\":true") > 0, "input again after it");
+
 	// F6: GTA's own movement
 	g_toggleJump = true;
 	frame();
 	check(!g_walk.on && !g_sped.frozen, "F6: GTA's own movement");
+	check(g_walkCam.cam == 0, "and GTA's own camera");
+
+	// GTA moves the player: Steve's body follows its bones
+	frame();
+	std::string cam;
+	for (const std::string &m : g_out)
+		if (m.find("\"t\":\"cam\"") != std::string::npos)
+			cam = m;
+	const size_t rigAt = cam.find("\"rig\":[");
+	check(rigAt != std::string::npos, "the camera message carries Steve's pose (rig)");
+	if (rigAt != std::string::npos)
+	{
+		float v[24] = {};
+		const char *q = cam.c_str() + rigAt + 7;
+		for (int i = 0; i < 24; ++i)
+		{
+			v[i] = std::strtof(q, const_cast<char **>(&q));
+			if (*q == ',')
+				++q;
+		}
+		std::printf("      up %.2f %.2f %.2f  right %.2f %.2f %.2f  head fwd %.2f %.2f %.2f  left arm %.2f %.2f %.2f\n", v[0], v[1], v[2], v[3],
+			v[4], v[5], v[6], v[7], v[8], v[12], v[13], v[14]);
+		check(v[1] > 0.99f && std::fabs(v[3] - 1.0f) < 0.01f, "body up is Minecraft's up, right is east (+x)");
+		check(v[8] < -0.98f && std::fabs(v[7]) < 0.05f, "the head looks north (Minecraft -z), level");
+		check(v[13] < -0.95f, "arms hang down");
+		const size_t pl = cam.find("\"pl\":[");
+		double fx, fy, fz;
+		sscanf(cam.c_str() + pl + 6, "%lf,%lf,%lf", &fx, &fy, &fz);
+		std::printf("      feet %.3f %.3f %.3f (ped z %.3f, yOffset %.3f)\n", fx, fy, fz, g_sped.z, g_yOffset);
+		check(std::fabs(fy - (g_sped.z - 1.0f + g_yOffset)) < 0.03, "standing: Steve's feet on the ground");
+	}
+
+	// a character switch: the one left behind shows again, unfrozen
+	g_toggleJump = true;
+	for (int i = 0; i < 5; ++i)
+		frame();
+	check(g_walk.on && g_frozenOf[1], "(Minecraft's movement again, the player frozen)");
+	g_playerPed = 2;
+	frame();
+	check(g_visible[1] && !g_frozenOf[1], "a character switch: the old character shows again and isn't frozen");
+	g_playerPed = 1;
+	for (int i = 0; i < 5; ++i)
+		frame();
+
+	// (the door is gone)
+	g_world.erase(std::remove_if(g_world.begin(), g_world.end(), [](const Box &b) { return b.entity == 50; }), g_world.end());
+	// an arrow at one of Minecraft's own blocks (its GTA prop): Minecraft stops it, GTA reports no hit
+	g_world.push_back({g_sped.x - 0.5f, g_sped.y + 3.0f, 10.4f, g_sped.x + 0.5f, g_sped.y + 4.0f, 11.4f, 60});
+	g_types[60] = 3;
+	g_props.handles.insert(60);
+	{
+		char m[200];
+		snprintf(m, sizeof(m), "{\"t\":\"proj\",\"p\":[[901,\"arrow\",%.3f,%.3f,%.3f]]}", g_sped.x, 10.9 + g_yOffset, -(g_sped.y + 6.0));
+		g_in.push_back(m);
+	}
+	frame();
+	check(count_out("\"t\":\"projhit\"") == 0, "an arrow at Minecraft's own block: GTA leaves it to Minecraft");
+	g_props.handles.erase(60);
+	g_world.pop_back();
+
+	// an arrow into a car's front wheel: the tyre bursts
+	g_car = {true, g_sped.x + 4.0f, g_sped.y, 11.0f, 0.0f, 0.0f};
+	g_world.push_back({g_car.x - 1.0f, g_car.y - 2.3f, 10.4f, g_car.x + 1.0f, g_car.y + 2.3f, 11.9f, 70});
+	g_types[70] = 2;
+	g_calls.clear();
+	g_in.push_back("{\"t\":\"proj\",\"p\":[]}");
+	frame();
+	{
+		// from the player's chest (3 m west of the car's side) through its front left wheel, 1.3 m ahead of its middle
+		char m[200];
+		snprintf(m, sizeof(m), "{\"t\":\"proj\",\"p\":[[902,\"arrow\",%.3f,%.3f,%.3f]]}", g_car.x + 2.0f, 9.38 + g_yOffset, -(g_car.y + 2.6));
+		g_in.push_back(m);
+	}
+	frame();
+	check(std::find(g_calls.begin(), g_calls.end(), "TyreBurst:0") != g_calls.end(), "an arrow in a car's wheel bursts that tyre");
+	g_world.pop_back();
+	g_car.on = false;
 	std::printf("%s\n", fails == 0 ? "ALL PASSED" : "SOME FAILED");
 	return fails != 0;
 }
