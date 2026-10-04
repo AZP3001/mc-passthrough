@@ -67,6 +67,51 @@ namespace natives
 		return invoke<int>(0x3D87450E15D98694, handle, hit, end, normal, entity);
 	}
 	inline void SetVehicleCanBeVisiblyDamaged(Vehicle v, BOOL toggle) { invoke<Void>(0x4C7028F78FFD3681, v, toggle); }
+	inline BOOL IsPedSprinting(Ped p) { return invoke<BOOL>(0x57E457CD2C0FC168, p); }
+	inline float GetFrameTime() { return invoke<float>(0x15C40837039FFAF7); }
+	inline BOOL IsWaypointActive() { return invoke<BOOL>(0x1DD1F58F493F1DA5); }
+	inline Blip GetFirstBlipInfoId(int sprite) { return invoke<Blip>(0x1BEDE233E6CD2A1F, sprite); }
+	inline Vector3 GetBlipInfoIdCoord(Blip b) { return invoke<Vector3>(0xFA7C7F0AADF25D09, b); }
+	inline void LockMinimapAngle(int angle) { invoke<Void>(0x299FAEBB108AE05B, angle); }
+	inline void UnlockMinimapAngle() { invoke<Void>(0x8183455E16C42E3A); }
+	inline void SetPedCanRagdollFromPlayerImpact(Ped p, BOOL t) { invoke<Void>(0xDF993EE5E90ABA25, p, t); }
+	inline BOOL IsEntityAttached(Entity e) { return invoke<BOOL>(0xB346476EF1A64897, e); }
+	inline void SetEntityAsNoLongerNeeded(Entity *e) { invoke<Void>(0xB736A491E64A32CF, e); }
+	inline BOOL IsModelInCdimage(Hash m) { return invoke<BOOL>(0x35B9E0803292B641, m); }
+	inline BOOL IsModelAVehicle(Hash m) { return invoke<BOOL>(0x19AAC8F07BFEC53E, m); }
+	inline void SetPedIntoVehicle(Ped p, Vehicle v, int seat) { invoke<Void>(0xF75B0D629E1C063D, p, v, seat); }
+	inline void TaskLeaveVehicle(Ped p, Vehicle v, int flags) { invoke<Void>(0xD3DBCE61A490BE02, p, v, flags); }
+	inline void TaskVehicleDriveWander(Ped p, Vehicle v, float speed, int style) { invoke<Void>(0x480142959D337D00, p, v, speed, style); }
+	inline void SetVehicleModKit(Vehicle v, int kit) { invoke<Void>(0x1F2AA07F00B3217A, v, kit); }
+	inline int GetNumVehicleMods(Vehicle v, int type) { return invoke<int>(0xE38E9162A2500646, v, type); }
+	inline void SetVehicleMod(Vehicle v, int type, int index, BOOL customTires) { invoke<Void>(0x6AF0636DDEDCB6DD, v, type, index, customTires); }
+	inline void RemoveVehicleMod(Vehicle v, int type) { invoke<Void>(0x92D619E420858204, v, type); }
+	inline void ToggleVehicleMod(Vehicle v, int type, BOOL on) { invoke<Void>(0x2A1F4F37F95BAD08, v, type, on); }
+	inline void SetVehicleWindowTint(Vehicle v, int tint) { invoke<Void>(0x57C51E6BAD752696, v, tint); }
+	inline void SetVehicleFixed(Vehicle v) { invoke<Void>(0x115722B1B9C14C1C, v); }
+	inline void SetVehicleDirtLevel(Vehicle v, float d) { invoke<Void>(0x79D3B596FE44EE8B, v, d); }
+	inline void TaskHandsUp(Ped p, int ms, Ped facing) { invoke<Void>(0xF2EAB31979A7F910, p, ms, facing, -1, 0); }
+	inline void TaskCower(Ped p, int ms) { invoke<Void>(0x3EB1FE9E8E908E15, p, ms); }
+	inline void TaskSmartFleePed(Ped p, Ped from, float dist, int ms) { invoke<Void>(0x22B0D0E37CCB840D, p, from, dist, ms, FALSE, FALSE); }
+	inline void SetCamMotionBlurStrength(Cam c, float s) { invoke<Void>(0x6F0F77FBA9A8F2E6, c, s); }
+	inline void SetCamUseShallowDofMode(Cam c, BOOL on) { invoke<Void>(0x16A96863A17552BB, c, on); }
+	inline void SetCamDofStrength(Cam c, float s) { invoke<Void>(0x5EE29B4D7D5DF897, c, s); }
+	inline void SetSuperJumpThisFrame(Player p) { invoke<Void>(0x57FFF03E423A4C0B, p); }
+	inline void SetExplosiveAmmoThisFrame(Player p) { invoke<Void>(0xA66C71C98D5F2CFB, p); }
+	inline void SetFireAmmoThisFrame(Player p) { invoke<Void>(0x11879CDD803D30F4, p); }
+	inline void SetExplosiveMeleeThisFrame(Player p) { invoke<Void>(0xFF1BED81BFDC0FE0, p); }
+	inline void SetRunSprintMultiplierForPlayer(Player p, float m) { invoke<Void>(0x6DB47AA77FD94E09, p, m); }
+	inline void SetSwimMultiplierForPlayer(Player p, float m) { invoke<Void>(0xA91C6F0FF7D16A13, p, m); }
+	inline void SetVehicleReduceGrip(Vehicle v, BOOL on) { invoke<Void>(0x222FF6A823D122E2, v, on); }
+	inline void SetGravityLevel(int level) { invoke<Void>(0x740E14FAD5842351, level); }
+	inline void SetTimeScale(float s) { invoke<Void>(0x1D408577D440E81E, s); }
+	inline void SetPlayerWeaponDamageModifier(Player p, float m) { invoke<Void>(0xCE07B9F7817AADA3, p, m); }
+	inline void SetPedIsDrunk(Ped p, BOOL on) { invoke<Void>(0x95D2D383D5396B8A, p, on); }
+	inline void SetPedMoveRateOverride(Ped p, float v) { invoke<Void>(0x085BF80FA50A39D1, p, v); }
+	inline void SetPlayerMeleeWeaponDamageModifier(Player p, float m) { invoke<Void>(0x4A3DC7ECCC321032, p, m, TRUE); }
+	inline void SetPlayerWeaponDefenseModifier(Player p, float m) { invoke<Void>(0x2D83BC011CA14A3C, p, m); }
+	inline void SetPlayerMeleeWeaponDefenseModifier(Player p, float m) { invoke<Void>(0xAE540335B4ABC4E2, p, m); }
+	inline void SetPlayerVehicleDefenseModifier(Player p, float m) { invoke<Void>(0x4C60E6EFDAFF2462, p, m); }
 	inline BOOL GetScreenCoordFromWorldCoord(float x, float y, float z, float *sx, float *sy) { return invoke<BOOL>(0x34E82F05DF2974F5, x, y, z, sx, sy); }
 	inline void DrawRect(float x, float y, float w, float h, int r, int g, int b, int a) { invoke<Void>(0x3A618A217E5154F0, x, y, w, h, r, g, b, a, FALSE); }
 

@@ -21,7 +21,8 @@ public final class HostBars {
 
 	public static int armor(final int own) {
 		HostState.Pose p = HostState.frame();
-		return p == null || p.health() < 0 ? own : Math.max(0, Math.min(20, Math.round(p.armor() * 20.0F / 100.0F)));
+		// GTA's body armour, or Minecraft's worn armour if that's more (both protect the player)
+		return p == null || p.health() < 0 ? own : Math.max(own, Math.max(0, Math.min(20, Math.round(p.armor() * 20.0F / 100.0F))));
 	}
 
 	public static int food(final int own) {

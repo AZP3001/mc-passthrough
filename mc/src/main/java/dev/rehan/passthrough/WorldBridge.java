@@ -287,6 +287,35 @@ public final class WorldBridge {
 	 * The host traced a projectile into something of its own: a firework bursts there; an arrow goes into a person
 	 * or car (gone) or sticks where it hit a wall; an ender pearl lands there (Steve teleports).
 	 */
+	/**
+	 * Arrows stuck in the host's people, cars and signs, where those are now ({id, x, y, z, yaw, pitch} each), and those
+	 * to let go of (gone: they fall out). Any thread.
+	 */
+	public static void stuckArrows(final double[][] at, final int[] gone) {
+		MinecraftServer s = server;
+		if (s == null) {
+			return;
+		}
+
+		s.execute(() -> {
+			ServerLevel level = s.overworld();
+			for (double[] a : at) {
+				if (level.getEntity((int) a[0]) instanceof AbstractArrow arrow) {
+					arrow.setPos(a[1], a[2], a[3]);
+					arrow.setYRot((float) a[4]);
+					arrow.setXRot((float) a[5]);
+				}
+			}
+
+			for (int id : gone) {
+				Entity e = level.getEntity(id);
+				if (e instanceof AbstractArrow) {
+					e.discard();
+				}
+			}
+		});
+	}
+
 	public static void projectileHit(final int id, final double x, final double y, final double z, final boolean stick) {
 		MinecraftServer s = server;
 		if (s == null) {

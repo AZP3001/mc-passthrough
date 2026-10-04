@@ -18,7 +18,9 @@ import net.minecraft.client.input.MouseButtonInfo;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
@@ -206,6 +208,15 @@ final class ClientInput {
 
 	/** The level of an enchantment (by its id's path: "sharpness") on an item, or 0. */
 	static int enchantment(final ItemStack stack, final String id) {
+		// (over 255, from /enchant: kept in the item's custom data)
+		CustomData custom = stack.get(DataComponents.CUSTOM_DATA);
+		if (custom != null) {
+			int over = custom.copyTag().getCompoundOrEmpty(Passthrough.OVER_LEVELS).getIntOr(id, 0);
+			if (over > 0) {
+				return over;
+			}
+		}
+
 		for (var e : stack.getEnchantments().entrySet()) {
 			if (e.getKey().unwrapKey().map(k -> k.identifier().getPath().equals(id)).orElse(false)) {
 				return e.getIntValue();

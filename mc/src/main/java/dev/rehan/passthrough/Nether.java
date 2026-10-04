@@ -341,7 +341,7 @@ public final class Nether {
 
 		switch (ticks) {
 			case 30 -> spawn(level, "zombified_piglin", 3);
-			case 70 -> spawn(level, "ghast", 1);
+			case 70 -> spawn(level, "zombified_piglin", 2); // (no ghasts)
 			case 110 -> spawn(level, "wither_skeleton", 2);
 			case 160 -> spawn(level, "blaze", 2);
 			case 220 -> {
@@ -358,10 +358,6 @@ public final class Nether {
 						spawn(level, "magma_cube", 2);
 						spawn(level, "zombified_piglin", 2);
 					}
-				}
-
-				if (ticks % 900 == 0) {
-					spawn(level, "ghast", 1);
 				}
 			}
 		}

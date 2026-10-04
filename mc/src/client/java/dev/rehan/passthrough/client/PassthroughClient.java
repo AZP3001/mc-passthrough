@@ -25,6 +25,8 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.ChargedProjectiles;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.LevelSettings;
 import net.minecraft.world.level.WorldDataConfiguration;
@@ -60,7 +62,7 @@ public class PassthroughClient implements ClientModInitializer {
 		"clear @a",
 		"item replace entity @a hotbar.0 with minecraft:ender_pearl 16",
 		"item replace entity @a hotbar.1 with minecraft:diamond_sword",
-		"item replace entity @a hotbar.2 with minecraft:crossbow[enchantments={multishot:1,quick_charge:3}]",
+		"item replace entity @a hotbar.2 with minecraft:crossbow[enchantments={quick_charge:3}]",
 		"item replace entity @a hotbar.3 with minecraft:bow[enchantments={power:5,infinity:1}]",
 		"item replace entity @a hotbar.4 with minecraft:tnt 64",
 		"item replace entity @a hotbar.5 with minecraft:flint_and_steel",
@@ -77,6 +79,12 @@ public class PassthroughClient implements ClientModInitializer {
 	private static int screenSentAt;
 	/** Whether the player wore an elytra when last told to the host (-1: not told yet), and when. */
 	private static int elytraSent = -1;
+	private static boolean bowSent;
+	private static String effectsSent = "";
+	private static int effectsSentAt;
+	private static int bowSentAt;
+	/** Alt held over one of Minecraft's screens (the host says): the screen and HUD are hidden, the player moves. */
+	public static volatile boolean peek;
 	private static int elytraSentAt;
 	/** Server ticks until the setup commands run (the player isn't in the player list yet when JOIN fires). */
 	private static int setupIn = -1;
@@ -127,10 +135,36 @@ public class PassthroughClient implements ClientModInitializer {
 		// host's world as through Minecraft's
 		if (minecraft.player != null) {
 			int elytra = minecraft.player.getItemBySlot(EquipmentSlot.CHEST).has(DataComponents.GLIDER) ? 1 : 0;
-			int state = elytra | (minecraft.player.isSpectator() ? 2 : 0);
+			int armor = minecraft.player.getArmorValue();
+			int state = elytra | (minecraft.player.isSpectator() ? 2 : 0) | (armor << 2);
 			if (state != elytraSent || ++elytraSentAt % 40 == 0) {
 				elytraSent = state;
-				Passthrough.events.accept("{\"t\":\"pstate\",\"ely\":" + elytra + ",\"spec\":" + (state >> 1) + "}");
+				Passthrough.events.accept("{\"t\":\"pstate\",\"ely\":" + elytra + ",\"spec\":" + ((state >> 1) & 1) + ",\"arm\":" + armor + "}");
+			}
+
+			// Minecraft's effects on the player (potions, beacons), felt by the host's player too
+			StringBuilder effects = new StringBuilder();
+			for (var e : minecraft.player.getActiveEffects()) {
+				String id = e.getEffect().unwrapKey().map(k -> k.identifier().getPath()).orElse("");
+				if (!id.isEmpty()) {
+					effects.append(effects.isEmpty() ? "" : ",").append(id).append(':').append(e.getAmplifier());
+				}
+			}
+
+			String list = effects.toString();
+			if (!list.equals(effectsSent) || ++effectsSentAt % 40 == 0) {
+				effectsSent = list;
+				Passthrough.events.accept("{\"t\":\"effects\",\"e\":\"" + list + "\"}");
+			}
+
+			// a bow drawn, or a loaded crossbow in hand: the host's people it's aimed at are intimidated
+			ItemStack using = minecraft.player.getUseItem(), held = minecraft.player.getMainHandItem();
+			ChargedProjectiles loaded = held.get(DataComponents.CHARGED_PROJECTILES);
+			boolean bow = (minecraft.player.isUsingItem() && (using.is(Items.BOW) || using.is(Items.CROSSBOW)))
+				|| (held.is(Items.CROSSBOW) && loaded != null && !loaded.isEmpty());
+			if (bow != bowSent || (bow && ++bowSentAt % 20 == 0)) {
+				bowSent = bow;
+				Passthrough.events.accept("{\"t\":\"bowdraw\",\"on\":" + bow + "}");
 			}
 		}
 

@@ -3,6 +3,7 @@ package dev.rehan.passthrough.mixin;
 import dev.rehan.passthrough.Passthrough;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.Vec3;
 import org.objectweb.asm.Opcodes;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -22,6 +23,19 @@ abstract class PlayerMixin {
 		Entity self = (Entity) (Object) this;
 		if (Passthrough.active && !(Passthrough.walking && self.level().isClientSide())) {
 			self.noPhysics = true;
+		}
+	}
+
+	/**
+	 * The server's player doesn't move by itself (the client, or the host, says where it is): without collision it fell
+	 * metres through the ground every tick before being put back, and the items it walked over were looked for down
+	 * there, so none were picked up.
+	 */
+	@Inject(method = "travel", at = @At("HEAD"), cancellable = true)
+	private void passthrough$noServerTravel(final Vec3 input, final CallbackInfo ci) {
+		Entity self = (Entity) (Object) this;
+		if (Passthrough.active && !self.level().isClientSide()) {
+			ci.cancel();
 		}
 	}
 }

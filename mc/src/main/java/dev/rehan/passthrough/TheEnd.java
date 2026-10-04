@@ -50,6 +50,10 @@ public final class TheEnd {
 	private static UUID dragon;
 	private static boolean dragonDown;
 	private static final RandomSource random = RandomSource.create();
+	/** Endermen in the host's cars they stole: where the host says the car's seat is (x, y, z, yaw), or null: out again. */
+	private static final Map<Integer, double[]> rides = new java.util.concurrent.ConcurrentHashMap<>();
+	private static final java.util.Set<Integer> riding = new java.util.HashSet<>();
+	private static final double[] OUT = new double[0];
 
 	private TheEnd() {
 	}
@@ -82,6 +86,65 @@ public final class TheEnd {
 			spread(level);
 			waves(level);
 			dragonTick(level);
+			thieves(level);
+		}
+
+		ridesTick(level);
+	}
+
+	/** The host: enderman `id` is in a stolen car at (x, y, z, yaw), or (null) out of it again. Any thread. */
+	public static void ride(final int id, final double[] at) {
+		rides.put(id, at == null ? OUT : at);
+	}
+
+	/** Now and then an enderman near the player goes for one of the host's cars (the host picks it, "enderthief"). */
+	private static void thieves(final ServerLevel level) {
+		if (ticks % 60 != 0 || !Passthrough.active) {
+			return;
+		}
+
+		for (Entity e : level.getAllEntities()) {
+			if (e.entityTags().contains(TAG) && e instanceof Mob && e.isAlive() && e.getType() == EntityTypes.ENDERMAN
+				&& !riding.contains(e.getId()) && random.nextFloat() < 0.2F) {
+				Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"enderthief\",\"id\":%d,\"pos\":[%.2f,%.2f,%.2f]}",
+					e.getId(), e.getX(), e.getY(), e.getZ()));
+			}
+		}
+	}
+
+	/** Endermen in stolen cars go where the cars are; let out, they're themselves again. */
+	private static void ridesTick(final ServerLevel level) {
+		if (rides.isEmpty()) {
+			return;
+		}
+
+		for (Map.Entry<Integer, double[]> r : rides.entrySet()) {
+			int id = r.getKey();
+			double[] at = rides.remove(id);
+			if (at == null) {
+				continue;
+			}
+
+			if (!(level.getEntity(id) instanceof Mob mob) || !mob.isAlive()) {
+				riding.remove(id);
+				continue;
+			}
+
+			if (at == OUT) {
+				riding.remove(id);
+				mob.setNoAi(false);
+				mob.setNoGravity(false);
+				continue;
+			}
+
+			riding.add(id);
+			mob.setNoAi(true);
+			mob.setNoGravity(true);
+			mob.teleportTo(at[0], at[1], at[2]);
+			mob.setYRot((float) at[3]);
+			mob.setYHeadRot((float) at[3]);
+			mob.setYBodyRot((float) at[3]);
+			mob.setDeltaMovement(net.minecraft.world.phys.Vec3.ZERO);
 		}
 	}
 

@@ -375,6 +375,7 @@ int worldGetAllVehicles(int *arr, int)
 	return 1;
 }
 int worldGetAllPeds(int *arr, int) { return 0; }
+int worldGetAllObjects(int *arr, int) { return 0; }
 
 // ---- the link ----
 void WsClient::start(const char *, int)

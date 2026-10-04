@@ -216,8 +216,8 @@ public final class FrameExporter {
 		}
 
 		long generation = c.generation;
-		if (!c.pose.control()) {
-			// the host's cutscene: none of Minecraft's GUI over it
+		if (!c.pose.control() || PassthroughClient.peek) {
+			// the host's cutscene (or Alt held over a screen, to look about): none of Minecraft's GUI over it
 			RenderSystem.getDevice().createCommandEncoder().clearColorTexture(target.getColorTexture(), TRANSPARENT);
 		}
 

@@ -45,7 +45,8 @@ public final class HostBridge {
 		Map.entry("ocelot", "a_c_mtlion"), Map.entry("dolphin", "a_c_dolphin"), Map.entry("cod", "a_c_fish"), Map.entry("salmon", "a_c_fish"),
 		Map.entry("tropical_fish", "a_c_fish")
 	);
-	private static final double REACH = 8.0;
+	/** The player's reach in blocks (/range). */
+	public static volatile double reach = 8.0;
 	private static final double SPEED = 0.14; // Minecraft's own is 0.1
 	private static final List<Entity> toConvert = new ArrayList<>();
 	private static boolean mobsSent;
@@ -101,8 +102,8 @@ public final class HostBridge {
 	private static void playerTick(final ServerPlayer player) {
 		boolean on = Passthrough.active;
 		if (on || attributesSet) {
-			base(player, Attributes.BLOCK_INTERACTION_RANGE, on ? REACH : 4.5);
-			base(player, Attributes.ENTITY_INTERACTION_RANGE, on ? REACH : 3.0);
+			base(player, Attributes.BLOCK_INTERACTION_RANGE, on ? reach : 4.5);
+			base(player, Attributes.ENTITY_INTERACTION_RANGE, on ? reach : 3.0);
 			base(player, Attributes.MOVEMENT_SPEED, on ? SPEED : 0.1);
 			attributesSet = on;
 		}
@@ -116,6 +117,9 @@ public final class HostBridge {
 		// what Minecraft did to its player since (a mob's hit, a fall, drowning) goes to the host's player
 		if (healthSet > 0.0F && player.getHealth() < healthSet - 0.01F) {
 			Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"pdmg\",\"d\":%.2f}", healthSet - player.getHealth()));
+		} else if (healthSet > 0.0F && player.getHealth() > healthSet + 0.01F) {
+			// and what healed it (a potion, regeneration, food) heals the host's player
+			Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"pheal\",\"d\":%.2f}", player.getHealth() - healthSet));
 		}
 
 		float want = Math.max(1.0F, host); // (the host decides when the player dies)

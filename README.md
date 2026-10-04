@@ -139,7 +139,7 @@ FORCE=1 ./gta/install.sh
 | Shift | sprint |
 | Ctrl | sneak; flying: go down |
 | Space | Minecraft's jump; flying: go up. **Hold** it at a ledge too high to jump and GTA climbs it |
-| Space twice | in the air with an elytra on: fly. In a car (driver's seat): the car flies with you; twice again to drive |
+| Space twice | in the air with an elytra on: glide. In a car (driver's seat, after `/fly`): the car flies with you; twice again to drive |
 | mouse | look all the way up and down (Minecraft movement) |
 | V | first person / third person (near, middle, far) |
 | left mouse | attack: break blocks, swing what you hold |
@@ -147,6 +147,8 @@ FORCE=1 ./gta/install.sh
 | mouse wheel, 1-9 | hotbar |
 | Q | drop the item in hand |
 | E or I | Minecraft's inventory (E goes to GTA when GTA asks for E) |
+| Esc | closes Minecraft's screen (doesn't open GTA's pause menu); with nothing open: GTA's pause menu |
+| hold Alt | over the inventory or chat: hides it, and you can move and look about; let go and it's back |
 | T | Minecraft's chat and commands |
 | Tab | Steve's hands: Minecraft items, or GTA's own weapons (for missions) |
 | F | get in a car, or climb a ladder you stand at |
@@ -169,8 +171,31 @@ Type them in Minecraft's chat (T):
 | `/kill @e` | kills Minecraft's mobs **and** GTA's people and animals around you (`/kill @e[type=cow]`: only cows) |
 | `/time set night` | sets GTA's clock too (`day`, `noon`, `night`, `midnight`, or a number) |
 | `/weather rain` | sets GTA's weather too (`clear`, `rain`, `thunder`) |
+| `/fly` | flying on / off (Space up, Ctrl down; a car flies with Space twice). Off: no flying at all |
+| `/waypoint` | teleports you (and your car) to the waypoint set on GTA's map |
+| `/range 12` | your reach in blocks, for blocks, mobs and GTA's people, cars and things (default 8) |
+| `/enchant @p knockback 1000` | any level, past Minecraft's limit (an item holds 255; higher levels count in GTA) |
+| `/summon car` | GTA things: `car`, `truck`, `tank`, `plane`, `jet`, `heli`, `boat`, `bike`, `bus`, `police`, `npc`, `cop`, `soldier`, or any GTA model name (`adder`, `a_m_y_hipster_01`). Minecraft's own mobs summon as always |
+| `/gta spawn tank` | the same as `/summon` |
+| `/gta superjump` | GTA's cheats and abilities, each on / off: `superjump`, `fastrun`, `fastswim`, `explosiveammo`, `fireammo`, `explosivemelee`, `slidey` (slidey cars), `moon` (low gravity), `slowmo`, `infiniteammo`, `neverwanted`, `onehit`, `drunk`; and `wanted 0-5`, `heal`, `armor`, `weapons` |
+| `/tune max` | the car you sit in: every performance part maxed and turbo. Also `stock`, `engine 1-4`, `brakes`, `transmission`, `suspension`, `armor`, `turbo on/off`, `wheels N`, `spoiler`, `bumpers`, `visuals`, `xenon`, `tint 0-6`, `repair` |
 | `/netherportal` | a lit Nether portal a few blocks ahead |
 | `/endportal` | an End portal a few blocks ahead |
+
+Also:
+
+- Steve is as tall as the GTA character he stands in for, and in first person you see his body, arms and legs.
+- Minecraft's potions and effects reach GTA: speed, slowness, jump boost, strength, fire resistance, nausea; healing heals
+  GTA's player. Thrown potions hit GTA's people and cars (harming eats a car, healing repairs it, swiftness shoves it...).
+- Minecraft armour you wear protects GTA's player too (4% less damage a point).
+- Hunger bar = stamina: sprinting and hard swimming use it up; empty, you can't sprint until it's back to a third.
+- Arrows stick in people, cars and signs and move with them; arrows and fists break glass where they hit, like a bullet.
+- Swords and other weapons knock along where you look: look up while hitting and they fly up. Lamp posts, signs, bins and
+  car parts lying about can be hit and launched too.
+- Lava melts cars (tyres pop, the body caves in, it burns and is pushed back out) and street furniture; fire under a car
+  sets it alight. Cars by your blocks don't despawn.
+- Endermen from the End steal GTA's cars and drive off in them. No ghasts come out of the Nether portal.
+- A bow drawn (or a loaded crossbow) at people: close up they put their hands up, further off they run.
 
 ## Settings
 

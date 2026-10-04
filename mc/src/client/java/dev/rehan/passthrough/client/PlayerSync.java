@@ -145,14 +145,20 @@ public final class PlayerSync {
 				}
 			}
 
-			// a flying car: Minecraft's creative flight while it flies, its own walking and falling again after
+			// flying only with /fly (Minecraft's jump tapped twice doesn't start it), or in a flying car: Minecraft's
+			// creative flight then, its own walking and falling otherwise
 			Abilities abilities = player.getAbilities();
-			if (p.fly() != flyingCar) {
-				flyingCar = p.fly();
-				if (abilities.mayfly && !player.isSpectator()) {
-					abilities.flying = flyingCar;
-					player.onUpdateAbilities();
-				}
+			flyingCar = p.fly();
+			boolean fly = player.isSpectator() || flyingCar || Passthrough.flyAllowed;
+			// creative flight faster than Minecraft's own (the host's streets are big): about 2.5 times
+			float flySpeed = flyingCar ? 0.05F : 0.125F;
+			if (abilities.getFlyingSpeed() != flySpeed) {
+				abilities.setFlyingSpeed(flySpeed);
+			}
+
+			if (abilities.flying != fly && (abilities.mayfly || !fly)) {
+				abilities.flying = fly;
+				player.onUpdateAbilities();
 			}
 
 			keys(options, p.input());

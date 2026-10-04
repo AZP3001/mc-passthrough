@@ -91,6 +91,38 @@ public final class HostLink extends WebSocketServer {
 					WorldBridge.projectileHit(m.get("id").getAsInt(), at.get(0).getAsDouble(), at.get(1).getAsDouble(), at.get(2).getAsDouble(),
 						m.has("stick") && m.get("stick").getAsBoolean());
 				}
+				case "arrows" -> {
+					JsonArray list = m.getAsJsonArray("a");
+					double[][] at = new double[list.size()][];
+					for (int i = 0; i < at.length; i++) {
+						JsonArray e = list.get(i).getAsJsonArray();
+						at[i] = new double[] {e.get(0).getAsDouble(), e.get(1).getAsDouble(), e.get(2).getAsDouble(), e.get(3).getAsDouble(),
+							e.get(4).getAsDouble(), e.get(5).getAsDouble()};
+					}
+
+					int[] gone = m.has("gone") ? ints(m.getAsJsonArray("gone")) : new int[0];
+					WorldBridge.stuckArrows(at, gone);
+					// the client's copies too, at once (the server's position updates for arrows come only now and then);
+					// in one game the two share entity ids
+					Minecraft minecraft = Minecraft.getInstance();
+					minecraft.execute(() -> {
+						if (minecraft.level == null) {
+							return;
+						}
+
+						for (double[] a : at) {
+							net.minecraft.world.entity.Entity e = minecraft.level.getEntity((int) a[0]);
+							if (e instanceof net.minecraft.world.entity.projectile.arrow.AbstractArrow) {
+								e.setPos(a[1], a[2], a[3]);
+								e.setOldPosAndRot();
+								e.setYRot((float) a[4]);
+								e.setXRot((float) a[5]);
+								e.yRotO = e.getYRot();
+								e.xRotO = e.getXRot();
+							}
+						}
+					});
+				}
 				case "peds" -> {
 					JsonArray list = m.getAsJsonArray("p");
 					double[] flat = new double[list.size() * 4];
@@ -110,6 +142,12 @@ public final class HostLink extends WebSocketServer {
 					m.has("at") ? new double[] {m.getAsJsonArray("at").get(0).getAsDouble(), m.getAsJsonArray("at").get(1).getAsDouble(),
 						m.getAsJsonArray("at").get(2).getAsDouble()} : null);
 				case "mobsclear" -> MobWar.clearMobs();
+				case "enderride" -> {
+					JsonArray at = m.has("pos") ? m.getAsJsonArray("pos") : null;
+					TheEnd.ride(m.get("id").getAsInt(), at == null ? null : new double[] {at.get(0).getAsDouble(), at.get(1).getAsDouble(),
+						at.get(2).getAsDouble(), m.has("yaw") ? m.get("yaw").getAsDouble() : 0.0});
+				}
+				case "peek" -> PassthroughClient.peek = m.has("on") && m.get("on").getAsBoolean();
 				case "portal" -> {
 					JsonArray at = m.getAsJsonArray("at");
 					Nether.buildPortal(at.get(0).getAsDouble(), at.get(1).getAsDouble(), at.get(2).getAsDouble(), m.get("yaw").getAsFloat());
