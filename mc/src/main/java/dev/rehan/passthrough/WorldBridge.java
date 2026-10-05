@@ -94,7 +94,7 @@ public final class WorldBridge {
 			for (int i = 0; i + 3 < columns.length; i += 4) {
 				for (int y = columns[i + 2]; y <= columns[i + 3]; y++) {
 					pos.set(columns[i], y, columns[i + 1]);
-					if (level.isInWorldBounds(pos) && level.getBlockState(pos).isAir()) {
+					if (level.isInWorldBounds(pos) && level.getBlockState(pos).isAir() && !HostDig.keepOut(pos)) {
 						level.setBlock(pos, barrier, Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
 						barriers.add(pos.immutable());
 					}
@@ -179,8 +179,9 @@ public final class WorldBridge {
 	private static boolean solidForHost(final ServerLevel level, final BlockPos pos, final BlockState state) {
 		// the Nether's and the End's ground is the host's own ground turned: nothing to collide with that isn't there
 		// already; and an end portal's frame is stepped over, not climbed (the host's player walks into the portal)
+		// (nor a block filling round a hole mined in the host's world: the host's own wall or ground is there)
 		return !state.isAir() && !state.is(Blocks.BARRIER) && !state.is(Blocks.END_PORTAL_FRAME) && !state.getCollisionShape(level, pos).isEmpty()
-			&& !Nether.isGround(pos) && !TheEnd.isGround(pos);
+			&& !Nether.isGround(pos) && !TheEnd.isGround(pos) && !HostDig.isFill(pos);
 	}
 
 	/** Arrows the host already hit something with (they stay where they hit and aren't reported again). */
@@ -196,6 +197,7 @@ public final class WorldBridge {
 
 		MobWar.tick(s);
 		Leads.tick(s);
+		HostDig.tick(s);
 		Nether.tick(s);
 		TheEnd.tick(s);
 		HostBridge.tick(s);
@@ -394,6 +396,7 @@ public final class WorldBridge {
 		}
 
 		Nether.onBlockChanged(pos, state);
+		HostDig.onBlockChanged(pos, state);
 		if (!placingGround) {
 			changes.put(pos.immutable(), solidForHost(level, pos, state));
 		}

@@ -6,6 +6,7 @@ import com.google.gson.JsonParser;
 import dev.rehan.passthrough.HostBridge;
 import dev.rehan.passthrough.HostCollision;
 import dev.rehan.passthrough.HostWater;
+import dev.rehan.passthrough.HostDig;
 import dev.rehan.passthrough.Leads;
 import dev.rehan.passthrough.MobWar;
 import dev.rehan.passthrough.Nether;
@@ -60,6 +61,7 @@ public final class HostLink extends WebSocketServer {
 	@Override
 	public void onOpen(final WebSocket conn, final ClientHandshake handshake) {
 		Passthrough.LOG.info("host connected from {}", conn.getRemoteSocketAddress());
+		HostDig.reset(); // (a host starting afresh knows of nothing mined)
 		conn.send(String.format(Locale.ROOT, "{\"t\":\"hello\",\"v\":1,\"shm\":\"%s\",\"pid\":%d}", FrameExporter.NAME.replace("\\", "\\\\"), ProcessHandle.current().pid()));
 	}
 
@@ -166,6 +168,7 @@ public final class HostLink extends WebSocketServer {
 					Leads.event(m.get("id").getAsInt(), m.get("e").getAsString(), at.get(0).getAsDouble(), at.get(1).getAsDouble(), at.get(2).getAsDouble());
 				}
 				case "boatgrab" -> Leads.grab(m.get("ped").getAsInt(), m.get("boat").getAsInt());
+				case "digfill" -> HostDig.fill(ints(m.getAsJsonArray("c")));
 				case "boatleave" -> Leads.leave(m.get("ped").getAsInt());
 				case "hostshot" -> {
 					JsonArray at = m.getAsJsonArray("pos"), dir = m.getAsJsonArray("dir");

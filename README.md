@@ -36,6 +36,18 @@ You play GTA's story as Steve, with Minecraft's items, blocks, mobs and movement
 - You can place blocks and pour water on GTA's streets, walls and ceilings. Reach is 8 blocks.
 - Water puts out GTA's fires and carries people and cars along.
 - GTA's water (sea, lakes, pools) is Minecraft water too: you swim in it, mobs swim, boats float, and riptide works.
+- Minecraft's fire and lava set fire to everything by them: people (alive or not), cars and things. Minecraft's fire
+  also burns as GTA's own fire, so it spreads to grass, people and cars the way GTA's does.
+
+**Mining GTA's world** (a pickaxe only)
+- Hold left click with a pickaxe on GTA's walls, streets, ground or a door and it's mined as in survival: Minecraft's
+  cracks, the time your pickaxe takes (Efficiency and Haste count), its sounds and particles, the pickaxe wearing out,
+  and a drop (cobblestone from rock and concrete, dirt from ground, sand, planks from wood, iron nuggets from metal).
+- A mined cell is gone: you walk or fall through it, and GTA's surface is cut out of the picture there. The cells around
+  it that are still inside GTA's solid world (the wall, the ground under the street) become Minecraft blocks, which are
+  the hole's sides. They mine on in the same way, so you can dig under the street or tunnel into a building.
+- A door or another of GTA's things mined is taken away.
+- `/clearall` puts all of it back.
 
 **Weapons**
 - Swords give Minecraft's knockback (20% stronger) without knocking people down; the Knockback enchantment knocks them
@@ -160,7 +172,7 @@ FORCE=1 ./gta/install.sh
 | Space twice | in the air with an elytra on: glide. In a car (driver's seat, after `/fly`): the car flies with you; twice again to drive |
 | mouse | look all the way up and down (Minecraft movement) |
 | V | first person / third person (near, middle, far) |
-| left mouse | attack: break blocks, swing what you hold |
+| left mouse | attack: break blocks, swing what you hold; hold with a pickaxe to mine GTA's world |
 | right mouse | use: place blocks, pour water, shoot, throw pearls and potions, eat |
 | mouse wheel, 1-9 | hotbar |
 | Q | drop the item in hand |
@@ -279,6 +291,12 @@ pitch = −pitch. The script picks yOffset so the ground where the player stands
   them with invisible barrier blocks, raised over GTA's walls and fences so mobs bump into them. GTA's water goes as
   `gwater`: Minecraft treats it as water nobody sees (`HostWater`, via `Level.getFluidState`; Minecraft only looks
   for water in chunk sections that hold some, so `EntityFluidMixin` lets it look where GTA has water).
+- **Mining.** With a pickaxe on GTA's surface (the crosshair hit carries its material), an unseen `HostSurfaceBlock`
+  fills the cell behind it, shaped to it, and Minecraft mines that as its own block (its cracks drawn as the block's own
+  faces, by stage). Broken, it's `dug`: the script hides a door there, or marks the cell dug out (its probes look past
+  it; the shader cuts GTA's surface out there from a 64³ grid of cells round the camera) and tells Minecraft which
+  cells round it are still inside GTA's solid world (`digfill`), filled with Minecraft's blocks whose outer faces the
+  shader hides. `mc/tools/gen_dig_assets.py` writes the block's models.
 - **Minecraft movement.** GTA's player is frozen and follows Minecraft's. GTA's floors, walls (24 rays at three
   heights, joined) and ceilings around the player go to Minecraft as collision boxes (`hc`). Fast moves (gliding) are
   checked against GTA's world along their whole path.
@@ -333,7 +351,8 @@ curl -sLO https://raw.githubusercontent.com/alloc8or/gta5-nativedb-data/master/n
 python3 gta/tests/check_natives.py natives.json
 
 # the GTA simulator (the script's movement, input, rig, minimap mask, arrows, character switches, leads, boats,
-# pickups and re-levelling never stopping the player, punched signs flung, /kill on people in cars)
+# pickups and re-levelling never stopping the player, punched signs flung, /kill on people in cars, mining GTA's world,
+# fire)
 python3 tests/sim/gen_hashes.py
 g++ -std=c++20 -w -Itests/sim/inc -Igta/third_party/shv "-D__declspec(x)=" -DNOMINMAX tests/sim/sim.cpp -o sim && ./sim
 
@@ -343,6 +362,7 @@ python3 tests/walktest.py               # Minecraft movement against GTA's colli
 python3 tests/features_test.py          # animals, commands, mobs, fires, spectator, HUD health, cutscene input
 python3 tests/leads_test.py             # leads on GTA's things (held, tied, cut), Minecraft's mobs tied there, boat seats
 python3 tests/water_test.py             # in GTA's water: in water (swimming), and a riptide trident launches there
+python3 tests/dig_test.py               # mining GTA's wall with a pickaxe: survival time, drop, wear, filled sides, /clearall
 ```
 
 The GTA side is also compile-checked with MinGW (`x86_64-w64-mingw32-g++ -fsyntax-only`), and the effect with

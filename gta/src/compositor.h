@@ -37,6 +37,10 @@ namespace compositor
 	/// height: his (metres); seated: in a car's seat (above his waist he shows through the car's windows, an open door's).
 	void set_steve(float x0, float y0, float x1, float y1, float near_d, float far_d, float glass_d, double x, double y, double z,
 		float height, bool seated);
+	/// The cells mined out of GTA's world round the camera, for the shader: 64 x 64 x 64 cells from Minecraft cell (ox, oy,
+	/// oz), as 512 x 512 bytes (slice y at column (y % 8) * 64, row (y / 8) * 64; 255 dug out, 128 a block filling round
+	/// it). Null: none.
+	void set_dig(int ox, int oy, int oz, const unsigned char *cells);
 	/// GTA's backbuffer size as ReShade sees it (0 until the first frame).
 	void backbuffer_size(int &width, int &height);
 }

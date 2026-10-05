@@ -224,6 +224,7 @@ public final class HostBridge {
 	 */
 	static int clearAll(final MinecraftServer s, final ServerPlayer player) {
 		ServerLevel level = s.overworld();
+		HostDig.clearAll(level); // (first: the host's ground back where it was mined, before the blocks go)
 		Nether.closeIfOpen(level);
 		TheEnd.closeIfOpen(level);
 		List<Entity> gone = new ArrayList<>();

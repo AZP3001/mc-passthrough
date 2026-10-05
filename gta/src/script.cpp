@@ -396,6 +396,8 @@ namespace
 	void world_mobs_message(const std::string &m);
 	void leash_use(Ped player, const std::string &m);
 	float entity_mass(Entity e);
+	void dug_message(const std::string &m);
+	void dig_clear();
 	void leash_gone(int id);
 	void boats_message(const std::string &m);
 	void animal_message(const std::string &m);
@@ -2031,6 +2033,54 @@ namespace
 		return (int64_t(x & 0x1FFFFF) << 42) | (int64_t(y & 0x1FFFFF) << 21) | int64_t(z & 0x1FFFFF);
 	}
 
+	// ---- Mining GTA's world (a pickaxe in Minecraft) ----
+	// The cells dug out of GTA's walls, streets and ground (Minecraft coordinates): Minecraft's player goes through them
+	// and the shader cuts them out of GTA's picture (Minecraft's world shows there). The cells round them still inside
+	// GTA's solid world (a wall, the ground under the street) Minecraft fills with its own blocks: the hole's sides.
+	std::unordered_map<int64_t, int> g_dug; // cell -> what it was: 0 rock, 1 soil, 2 sand, 3 wood, 4 metal
+	std::unordered_set<int64_t> g_digFill;
+	std::vector<Entity> g_dugThings;        // doors and other things mined away (hidden till /clearall)
+	bool g_digDirty = false;                // the shader's copy of the cells is out of date
+
+	void cell_of(int64_t k, int &x, int &y, int &z)
+	{
+		auto unpack = [](int64_t v) {
+			v &= 0x1FFFFF;
+			return int(v & 0x100000 ? v - 0x200000 : v);
+		};
+		x = unpack(k >> 42);
+		y = unpack(k >> 21);
+		z = unpack(k);
+	}
+
+	/// GTA's point at the middle of Minecraft's cell (x, y, z).
+	Vector3 cell_middle(int x, int y, int z)
+	{
+		Vector3 p = {};
+		p.x = float(x) + 0.5f;
+		p.y = -(float(z) + 0.5f);
+		p.z = float(y) + 0.5f - g_yOffset;
+		return p;
+	}
+
+	/// Whether GTA's point (x, y, z) is in a cell dug out.
+	bool dug_at(float x, float y, float z)
+	{
+		return !g_dug.empty() && g_dug.count(cell_key(int(std::floor(x)), int(std::floor(z + g_yOffset)), int(std::floor(-y)))) != 0;
+	}
+
+	/// What a GTA surface is, for mining it: 0 rock (concrete, tarmac, brick, stone, plaster, glass...), 1 soil (grass,
+	/// dirt, mud, gravel, snow), 2 sand, 3 wood, 4 metal. (ScriptHookVDotNet's table of GTA's material hashes.)
+	int material_kind(Hash m)
+	{
+		switch (m)
+		{
+
+		default:
+			return 0;
+		}
+	}
+
 	int64_t cluster_key(int kind, int x, int z)
 	{
 		return (int64_t(kind) << 60) | (int64_t((x >> 2) & 0x3FFFFFFF) << 30) | int64_t((z >> 2) & 0x3FFFFFFF);
@@ -2110,6 +2160,63 @@ namespace
 		return g_hot.count(cell_key(x, y, z)) != 0;
 	}
 
+	/// Whether Minecraft's fire, lava or magma is round GTA's point (x, y, z): within `reach` across, and from a cell
+	/// under it up to `up` over it.
+	bool hot_near(float x, float y, float z, float reach, float up)
+	{
+		const int x0 = int(std::floor(x - reach)), x1 = int(std::floor(x + reach)), z0 = int(std::floor(-y - reach)), z1 = int(std::floor(-y + reach));
+		const int y0 = int(std::floor(z + g_yOffset)) - 1, y1 = int(std::floor(z + g_yOffset + up));
+		for (int cx = x0; cx <= x1; ++cx)
+			for (int cz = z0; cz <= z1; ++cz)
+				for (int cy = y0; cy <= y1; ++cy)
+					if (hot_at(cx, cy, cz))
+						return true;
+		return false;
+	}
+
+	// Minecraft's fire as GTA's own fire too (it spreads to grass, people and cars as GTA's fires do): cell -> GTA's fire
+	std::unordered_map<int64_t, int> g_scriptFires;
+
+	/// Minecraft's fire near the player: a GTA fire on each burning cell (where GTA has none already: one of GTA's own
+	/// that Minecraft got as fire, or one already started), at most 24; gone with Minecraft's fire.
+	void script_fires_tick(Ped player)
+	{
+		const Vector3 me = natives::GetEntityCoords(player, TRUE);
+		for (auto it = g_scriptFires.begin(); it != g_scriptFires.end();)
+		{
+			const auto hot = g_hot.find(it->first);
+			if (hot != g_hot.end() && hot->second != 0)
+			{
+				++it;
+				continue;
+			}
+			natives::RemoveScriptFire(it->second);
+			it = g_scriptFires.erase(it);
+		}
+		int started = 0;
+		for (const auto &[key, kind] : g_hot)
+		{
+			if (kind == 0 || g_scriptFires.size() >= 24 || started >= 4)
+				continue; // (lava is Minecraft's alone: it lights what's by it, hot_tick)
+			if (g_scriptFires.count(key))
+				continue;
+			int x, y, z;
+			cell_of(key, x, y, z);
+			const Vector3 at = cell_middle(x, y, z);
+			if ((at.x - me.x) * (at.x - me.x) + (at.y - me.y) * (at.y - me.y) > 60.0f * 60.0f || natives::GetNumberOfFiresInRange(at.x, at.y, at.z, 1.2f) > 0)
+				continue;
+			g_scriptFires[key] = natives::StartScriptFire(at.x, at.y, at.z - 0.5f, 2, FALSE);
+			++started;
+		}
+	}
+
+	void script_fires_clear()
+	{
+		for (const auto &[key, fire] : g_scriptFires)
+			natives::RemoveScriptFire(fire);
+		g_scriptFires.clear();
+	}
+
 	/// Five times a second: GTA's people and cars on (or in) Minecraft's lava, fire or magma catch fire.
 	void dent_vehicle(Vehicle v, const Vector3 &at, float damage, float radius);
 	std::unordered_map<Entity, int> g_melting; // street furniture melting in lava: gone at that time
@@ -2117,22 +2224,29 @@ namespace
 	void hot_tick(Ped player)
 	{
 		const int now = natives::GetGameTimer();
-		if (g_hot.empty() || now < g_nextHotCheckAt)
+		if (now < g_nextHotCheckAt)
 			return;
+		if (g_hot.empty())
+		{
+			if (!g_scriptFires.empty())
+				script_fires_clear(); // (Minecraft's fire all out, or cleared)
+			return;
+		}
 		g_nextHotCheckAt = now + 200;
+		script_fires_tick(player);
 		const Vector3 me = natives::GetEntityCoords(player, TRUE);
 		int handles[256];
 		const int n = worldGetAllPeds(handles, 256);
 		for (int i = 0; i < n; ++i)
 		{
 			const Ped q = handles[i];
-			if (q == player || g_doublePeds.count(q) || natives::IsPedDeadOrDying(q) || natives::IsEntityOnFire(q))
+			if (q == player || g_doublePeds.count(q) || natives::IsEntityOnFire(q))
 				continue;
 			const Vector3 o = natives::GetEntityCoords(q, TRUE);
 			if ((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) > 80.0f * 80.0f)
 				continue;
-			const int cx = int(std::floor(o.x)), cz = int(std::floor(-o.y)), cy = int(std::floor(o.z - 1.0f + g_yOffset + 0.2f));
-			if (hot_at(cx, cy, cz) || hot_at(cx, cy - 1, cz))
+			// in it, or right by it (anywhere round their body, feet to head: lying down too)
+			if (hot_near(o.x, o.y, o.z - 1.0f, 0.5f, 2.0f))
 				natives::StartEntityFire(q);
 		}
 		const int cars = worldGetAllVehicles(handles, 256);
@@ -2168,7 +2282,12 @@ namespace
 					}
 				}
 			if (fire + lava == 0)
+			{
+				// right by it (against its side, its bumper): it catches all the same
+				if (!natives::IsEntityOnFire(v) && hot_near(o.x, o.y, o.z - 0.6f, 1.6f, 1.6f))
+					natives::StartEntityFire(v);
 				continue;
+			}
 			// fire under it: it burns (the engine catches, as a wrecked car's does)
 			if (!natives::IsEntityOnFire(v))
 				natives::StartEntityFire(v);
@@ -2215,7 +2334,12 @@ namespace
 				inLava = it != g_hot.end() && it->second == 0;
 			}
 			if (!inLava)
+			{
+				// by fire (or lava): alight, where it stands
+				if (!natives::IsEntityAttached(ob) && !natives::IsEntityOnFire(ob) && hot_near(o.x, o.y, o.z - 0.5f, 0.8f, 1.5f))
+					natives::StartEntityFire(ob);
 				continue;
+			}
 			natives::SetEntityDynamic(ob, TRUE);
 			natives::ApplyForceToEntity(ob, 0.0f, 0.0f, -2.0f);
 			natives::StartEntityFire(ob);
@@ -3618,6 +3742,11 @@ namespace
 				mobhit_message(natives::PlayerPedId(), message);
 			return;
 		}
+		if (type == "dug")
+		{
+			dug_message(message);
+			return;
+		}
 		if (type == "leashuse")
 		{
 			leash_use(natives::PlayerPedId(), message);
@@ -3893,6 +4022,13 @@ namespace
 			if (dx * dx + dz * dz < 24 * 24)
 				return; // blocks nearby: keep them where they are
 		}
+		for (const auto &[key, kind] : g_dug)
+		{
+			int x, y, z;
+			cell_of(key, x, y, z);
+			if ((x - px) * (x - px) + (z - pz) * (z - pz) < 24 * 24)
+				return; // a hole dug nearby: it stays where it was dug
+		}
 		logf("relevel: the ground here is %.2f off a whole block", mc - std::round(mc));
 		g_haveOffset = false; // the tick re-levels to the ground here
 	}
@@ -4103,15 +4239,44 @@ namespace
 		return (int64_t(i) << 32) ^ uint32_t(j);
 	}
 
+	/// A probe through GTA's world from (x0, y0, z0) to (x1, y1, z1): the first surface that isn't in a cell dug out
+	/// (a hole's own sides are Minecraft's blocks), its entity (0: the map) and its material. True on a hit.
+	bool world_probe(Entity ignore, float x0, float y0, float z0, float x1, float y1, float z1, int flags, int options, Vector3 &at,
+		Vector3 &normal, Entity &entity, Hash &material)
+	{
+		const float dx = x1 - x0, dy = y1 - y0, dz = z1 - z0, len = std::sqrt(dx * dx + dy * dy + dz * dz);
+		if (len < 1e-4f)
+			return false;
+		const float ux = dx / len, uy = dy / len, uz = dz / len;
+		float sx = x0, sy = y0, sz = z0;
+		for (int i = 0; i < 6; ++i)
+		{
+			BOOL hit = FALSE;
+			entity = 0;
+			material = 0;
+			const int probe = natives::StartShapeTestLosProbe(sx, sy, sz, x1, y1, z1, flags, ignore, options);
+			if (natives::GetShapeTestResultIncludingMaterial(probe, &hit, &at, &normal, &material, &entity) != 2 || !hit)
+				return false;
+			// (a surface on a dug cell's edge counts as in it, from either side: the street over a hole dug under it)
+			if (g_dug.empty() || !(dug_at(at.x + ux * 0.03f, at.y + uy * 0.03f, at.z + uz * 0.03f) || dug_at(at.x - ux * 0.03f, at.y - uy * 0.03f, at.z - uz * 0.03f)))
+				return true;
+			sx = at.x + ux * 0.05f;
+			sy = at.y + uy * 0.05f;
+			sz = at.z + uz * 0.05f;
+			if ((x1 - sx) * ux + (y1 - sy) * uy + (z1 - sz) * uz <= 0.0f)
+				return false;
+		}
+		return false;
+	}
+
 	/// A probe through GTA's world for the player's own collision: the map, vehicles, objects and glass (see-through
-	/// fences and glass block the way like walls do). Not people, and not the props for Minecraft's own blocks
-	/// (Minecraft has those). True on a hit.
+	/// fences and glass block the way like walls do). Not people, not the props for Minecraft's own blocks (Minecraft
+	/// has those), and not what's been dug out. True on a hit.
 	bool solid_probe(Ped ped, float x0, float y0, float z0, float x1, float y1, float z1, Vector3 &at, Vector3 &normal)
 	{
-		BOOL hit = FALSE;
 		Entity entity = 0;
-		const int probe = natives::StartShapeTestLosProbe(x0, y0, z0, x1, y1, z1, 1 | 2 | 16 | 64, ped, 4);
-		if (natives::GetShapeTestResult(probe, &hit, &at, &normal, &entity) != 2 || !hit)
+		Hash material = 0;
+		if (!world_probe(ped, x0, y0, z0, x1, y1, z1, 1 | 2 | 16 | 64, 4, at, normal, entity, material))
 			return false;
 		return entity == 0 || !g_props.handles.count(entity);
 	}
@@ -4815,7 +4980,12 @@ namespace
 			else if (natives::GetGroundZFor3dCoord(g_walk.x, g_walk.y, g_walk.standZ + 1.0f, &ground, TRUE, FALSE) && ground != 0.0f &&
 				ground < g_walk.standZ + 0.6f)
 				floor = ground;
-			if (!std::isnan(floor) && floor > g_walk.z + 0.9f)
+			// (not where the floor has been dug out, or the player is in a hole dug: under the street is where it's meant to be)
+			bool dugBelow = dug_at(g_walk.x, g_walk.y, g_walk.z + 0.1f) || dug_at(g_walk.x, g_walk.y, g_walk.z + 1.1f);
+			if (!std::isnan(floor))
+				for (int cy = int(std::floor(g_walk.z + g_yOffset)); cy <= int(std::floor(floor + g_yOffset + 0.5f)) && !dugBelow; ++cy)
+					dugBelow = g_dug.count(cell_key(int(std::floor(g_walk.x)), cy, int(std::floor(-g_walk.y)))) != 0;
+			if (!std::isnan(floor) && floor > g_walk.z + 0.9f && !dugBelow)
 			{
 				// (back up onto it; never GTA's movement instead: that dropped players bridging over gaps)
 				g_walk.z = g_walk.standZ = floor + 0.02f;
@@ -4904,12 +5074,16 @@ namespace
 
 	/// What the crosshair points at in GTA's world within block reach: the point and the surface's normal (Minecraft
 	/// coordinates), so Minecraft can place blocks against GTA's walls and ceilings.
-	bool block_point(Ped ped, const Vector3 &c, const Vector3 &r, float out[6])
+	bool block_point(Ped ped, const Vector3 &c, const Vector3 &r, float out[8])
 	{
 		const float d2r = 3.14159265f / 180.0f, h = r.z * d2r, pt = r.x * d2r;
 		const float fx = -std::sin(h) * std::cos(pt), fy = std::cos(h) * std::cos(pt), fz = std::sin(pt);
 		Vector3 at = {}, n = {};
-		if (!solid_probe(ped, c.x + fx * 0.3f, c.y + fy * 0.3f, c.z + fz * 0.3f, c.x + fx * 14.0f, c.y + fy * 14.0f, c.z + fz * 14.0f, at, n))
+		Entity e = 0;
+		Hash material = 0;
+		if (!world_probe(ped, c.x + fx * 0.3f, c.y + fy * 0.3f, c.z + fz * 0.3f, c.x + fx * 14.0f, c.y + fy * 14.0f, c.z + fz * 14.0f,
+				1 | 2 | 16 | 64, 4, at, n, e, material) ||
+			(e != 0 && g_props.handles.count(e)))
 			return false;
 		out[0] = at.x;
 		out[1] = at.z + g_yOffset;
@@ -4917,6 +5091,10 @@ namespace
 		out[3] = n.x;
 		out[4] = n.z;
 		out[5] = -n.y;
+		// what it is, for Minecraft's pickaxe: the material (rock, soil, sand, wood, metal) and whose it is (0 the map, 2 a
+		// car, 3 a thing: a door, a sign)
+		out[6] = float(material_kind(material));
+		out[7] = e != 0 ? float(natives::GetEntityType(e)) : 0.0f;
 		return true;
 	}
 
@@ -6347,6 +6525,152 @@ namespace
 		leash_send(player); // (none left: Minecraft lets its ends go)
 	}
 
+	/// Whether GTA's point p (a cell's middle) is inside its solid world (a wall, a roof, under the street) rather than in
+	/// the open (a room, under a bridge). Looking straight up: the underside of something means open air under it; the
+	/// top of something seen from within, or GTA's ground above with nothing seen (its collision faces only outward),
+	/// means inside.
+	bool gta_solid(const Vector3 &p)
+	{
+		BOOL hit = FALSE;
+		Vector3 at = {}, n = {};
+		Entity e = 0;
+		const int probe = natives::StartShapeTestLosProbe(p.x, p.y, p.z, p.x, p.y, p.z + 60.0f, 1, 0, 7);
+		if (natives::GetShapeTestResult(probe, &hit, &at, &n, &e) == 2 && hit)
+		{
+			if (n.z < -0.3f)
+				return false;
+			if (n.z > 0.3f)
+				return true;
+		}
+		float top = 0.0f;
+		return natives::GetGroundZFor3dCoord(p.x, p.y, p.z + 100.0f, &top, FALSE, FALSE) && top > p.z;
+	}
+
+	/// Minecraft's pickaxe broke cell (x, y, z) of GTA's world ({"t":"dug","c":[x,y,z],"k":kind}). A door or another
+	/// thing there is mined away (hidden). GTA's own wall, street or ground: the cell is dug out (passable, cut out of
+	/// the picture), and Minecraft is told which cells round it are still inside GTA's solid world, to fill with its own
+	/// blocks ({"t":"digfill","c":[x,y,z,kind,...]}; deep under the ground stone, as in Minecraft).
+	void dug_message(const std::string &m)
+	{
+		std::vector<int> c;
+		json_ints(m, "c", c);
+		if (c.size() < 3)
+			return;
+		const int x = c[0], y = c[1], z = c[2], kind = std::clamp(int(json_num(m, "k", 0.0)), 0, 4);
+		const Vector3 mid = cell_middle(x, y, z);
+		{
+			// a thing (a door, a sign) where the crosshair was: from the camera into the cell, and across it
+			const Vector3 eye = natives::GetFinalRenderedCamCoord();
+			const float ex = mid.x - eye.x, ey = mid.y - eye.y, ez = mid.z - eye.z, el = std::max(0.01f, std::sqrt(ex * ex + ey * ey + ez * ez));
+			const float probes[4][6] = {{eye.x, eye.y, eye.z, mid.x + ex / el * 0.7f, mid.y + ey / el * 0.7f, mid.z + ez / el * 0.7f},
+				{mid.x - 0.7f, mid.y, mid.z, mid.x + 0.7f, mid.y, mid.z}, {mid.x, mid.y - 0.7f, mid.z, mid.x, mid.y + 0.7f, mid.z},
+				{mid.x, mid.y, mid.z + 0.7f, mid.x, mid.y, mid.z - 0.7f}};
+			for (const auto &q : probes)
+			{
+				BOOL hit = FALSE;
+				Vector3 at = {}, n = {};
+				Entity e = 0;
+				const int probe = natives::StartShapeTestLosProbe(q[0], q[1], q[2], q[3], q[4], q[5], 16, natives::PlayerPedId(), 7);
+				if (natives::GetShapeTestResult(probe, &hit, &at, &n, &e) != 2 || !hit || e == 0 || g_props.handles.count(e) ||
+					natives::GetEntityType(e) != 3 || natives::IsEntityAttached(e) || dist3(at, mid) > 1.0f)
+					continue;
+				natives::SetEntityVisible(e, FALSE, FALSE);
+				natives::SetEntityCollision(e, FALSE, FALSE);
+				natives::FreezeEntityPosition(e, TRUE);
+				g_dugThings.push_back(e);
+				logf("dug: thing %d (model %08X) at %d %d %d mined away", int(e), unsigned(natives::GetEntityModel(e)), x, y, z);
+				return;
+			}
+		}
+		g_dug[cell_key(x, y, z)] = kind;
+		g_digFill.erase(cell_key(x, y, z));
+		g_digDirty = true;
+		std::string fill;
+		int filled = 0;
+		static const int dirs[6][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+		for (const auto &d : dirs)
+		{
+			const int nx = x + d[0], ny = y + d[1], nz = z + d[2];
+			const int64_t k = cell_key(nx, ny, nz);
+			if (g_dug.count(k) || g_digFill.count(k))
+				continue;
+			const Vector3 p = cell_middle(nx, ny, nz);
+			if (!gta_solid(p))
+				continue;
+			int fk = kind;
+			float top = 0.0f;
+			if ((fk == 1 || fk == 2) && natives::GetGroundZFor3dCoord(p.x, p.y, p.z + 100.0f, &top, FALSE, FALSE) && top - p.z > 3.0f)
+				fk = 0;
+			g_digFill.insert(k);
+			char e[64];
+			snprintf(e, sizeof(e), "%s%d,%d,%d,%d", fill.empty() ? "" : ",", nx, ny, nz, fk);
+			fill += e;
+			++filled;
+		}
+		if (!fill.empty())
+			g_ws.send("{\"t\":\"digfill\",\"c\":[" + fill + "]}");
+		logf("dug: cell %d %d %d (kind %d) out of GTA's world, %d round it filled (%d dug in all)", x, y, z, kind, filled, int(g_dug.size()));
+	}
+
+	/// Everything mined back (/clearall, a new Minecraft): the things hidden show again, no cell is dug out.
+	void dig_clear()
+	{
+		for (const Entity e : g_dugThings)
+			if (natives::DoesEntityExist(e))
+			{
+				natives::SetEntityVisible(e, TRUE, FALSE);
+				natives::SetEntityCollision(e, TRUE, TRUE);
+				natives::FreezeEntityPosition(e, FALSE);
+			}
+		g_dugThings.clear();
+		if (!g_dug.empty() || !g_digFill.empty())
+			g_digDirty = true;
+		g_dug.clear();
+		g_digFill.clear();
+	}
+
+	/// Every frame: the shader's copy of the dug and filled cells round the camera (64 cells each way, as a 512 x 512
+	/// texture of 64 slices), sent again when they change or the camera has moved well off its middle.
+	void dig_grid_tick()
+	{
+		static int ox = 0, oy = 0, oz = 0;
+		static bool sent = false;
+		const Vector3 cam = natives::GetFinalRenderedCamCoord();
+		const int cx = int(std::floor(cam.x)), cy = int(std::floor(cam.z + g_yOffset)), cz = int(std::floor(-cam.y));
+		const bool off = std::abs(cx - (ox + 32)) > 12 || std::abs(cy - (oy + 32)) > 12 || std::abs(cz - (oz + 32)) > 12;
+		if (!g_digDirty && !(sent && off))
+			return;
+		g_digDirty = false;
+		if (g_dug.empty() && g_digFill.empty())
+		{
+			if (sent)
+				compositor::set_dig(0, 0, 0, nullptr);
+			sent = false;
+			return;
+		}
+		ox = cx - 32;
+		oy = cy - 32;
+		oz = cz - 32;
+		static uint8_t grid[512 * 512];
+		std::memset(grid, 0, sizeof(grid));
+		auto put = [&](int64_t k, uint8_t v) {
+			int x, y, z;
+			cell_of(k, x, y, z);
+			x -= ox;
+			y -= oy;
+			z -= oz;
+			if (x < 0 || y < 0 || z < 0 || x > 63 || y > 63 || z > 63)
+				return;
+			grid[((y / 8) * 64 + z) * 512 + (y % 8) * 64 + x] = v;
+		};
+		for (const int64_t k : g_digFill)
+			put(k, 128);
+		for (const auto &[k, kind] : g_dug)
+			put(k, 255);
+		compositor::set_dig(ox, oy, oz, grid);
+		sent = true;
+	}
+
 	/// The rows of numbers of a JSON array of arrays ("key":[[1,2],[3,4]]).
 	std::vector<std::vector<double>> json_rows(const std::string &m, const char *key)
 	{
@@ -6765,6 +7089,7 @@ namespace
 			g_waterClusters.clear();
 			leash_clear_all(player, false);
 			riders_clear_all(false);
+			dig_clear();
 			natives::ClearArea(me.x, me.y, me.z, 400.0f);
 			natives::StopFireInRange(me.x, me.y, me.z, 400.0f);
 			natives::Notify("Cleared: Minecraft's mobs, items and blocks, and GTA's cars, people and fires around you");
@@ -7166,6 +7491,8 @@ namespace
 			leash_clear_all(ped, false);
 			if (!g_riders.empty())
 				riders_clear_all(g_ws.connected());
+			if (!g_scriptFires.empty())
+				script_fires_clear();
 			std::string ignored;
 			while (g_ws.poll(ignored))
 			{
@@ -7193,6 +7520,7 @@ namespace
 			g_hotClusters.clear();
 			g_water.clear();
 			g_waterClusters.clear();
+			dig_clear(); // (a Minecraft started afresh has none of it)
 			g_ws.send("{\"t\":\"nethersync\"}");
 		}
 		weapon_assets_tick();
@@ -7374,7 +7702,7 @@ namespace
 		else
 		{
 			// Steve aims where the crosshair is (third person, Minecraft's items), and places blocks against GTA's walls
-			float ax = 0.0f, ay = 0.0f, az = 0.0f, bp[6] = {};
+			float ax = 0.0f, ay = 0.0f, az = 0.0f, bp[8] = {};
 			const bool aim = !scene && !firstPerson && !gun;
 			if (aim)
 				aim_point(ped, c, r, ax, ay, az);
@@ -7427,11 +7755,11 @@ namespace
 				natives::GetPedArmour(ped), g_stamina, g_carFly.on ? "true" : "false", g_steveHeight, natives::GetRainLevel());
 			sendf("{\"t\":\"cam\",\"f\":%d,\"p\":[%.4f,%.4f,%.4f],\"r\":[%.3f,%.3f,%.3f],\"fov\":%.3f,\"fp\":%s,\"pl\":[%.4f,%.4f,%.4f],\"h\":%.3f,"
 				  "\"gun\":%s,\"veh\":%s,\"sn\":%s,\"aim\":[%.3f,%.3f,%.3f],\"aimOn\":%s,\"walk\":%s,\"in\":%d,\"dead\":%s,"
-				  "\"gh\":[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f],\"ghOn\":%s,\"ctl\":%s%s%s}",
+				  "\"gh\":[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.0f,%.0f],\"ghOn\":%s,\"ctl\":%s%s%s}",
 				natives::GetFrameCount(), c.x, c.z + g_yOffset, -c.y, mcYaw, mcPitch, mcRoll, fov, firstPerson ? "true" : "false", sx,
 				sz + g_yOffset, -sy, wrap_degrees(180.0f - natives::GetEntityHeading(who)), holding_gta_weapon(ped) && !scene ? "true" : "false",
 				sit && !g_carFly.on ? "true" : "false", "false", ax, ay, az, aim ? "true" : "false",
-				g_walk.on || g_carFly.on ? "true" : "false", input, dead ? "true" : "false", bp[0], bp[1], bp[2], bp[3], bp[4], bp[5], hasBlock ? "true" : "false",
+				g_walk.on || g_carFly.on ? "true" : "false", input, dead ? "true" : "false", bp[0], bp[1], bp[2], bp[3], bp[4], bp[5], bp[6], bp[7], hasBlock ? "true" : "false",
 				control ? "true" : "false", rigJson, bars);
 			// (first person: Minecraft puts its player's eyes at the camera, so its feet are 1.62 m under it)
 			steve_region(ped, c, r, sx, sy, sz, !firstPerson, sit && !g_carFly.on); // (first person: Steve isn't drawn)
@@ -7447,6 +7775,7 @@ namespace
 		// Minecraft draws the player (Steve), the hand and its HUD; in cutscenes Steve stands in for the player's
 		// character too (and Minecraft's HUD hides)
 		hide_player(ped);
+		dig_grid_tick();
 		if (scene)
 			natives::SetEntityLocallyInvisible(ped);
 		if (who != ped)

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <vector>
 #include <reshade.hpp>
 
 using namespace reshade::api;
@@ -70,6 +71,14 @@ namespace
 	};
 	Layer g_world, g_depth, g_overlay;
 	uint32_t g_width = 0, g_height = 0;
+	// the cells mined out of GTA's world (set_dig), and the texture the effect reads them from
+	std::mutex g_digLock;
+	std::vector<uint8_t> g_digCells; // under g_digLock; empty: none
+	int g_digOrigin[3] = {0, 0, 0};  // under g_digLock
+	bool g_digChanged = false;       // under g_digLock
+	Layer g_dig;
+	bool g_digOn = false;
+	int g_digShown[3] = {0, 0, 0};
 	bool g_hasFrame = false;
 	float g_mcNear = 0.05f, g_mcFar = 2048.0f;
 	int32_t g_mcFlags = 7;
@@ -143,6 +152,37 @@ namespace
 		runtime->update_texture_bindings("MCWORLD", g_world.srv, g_world.srv);
 		runtime->update_texture_bindings("MCDEPTH", g_depth.srv, g_depth.srv);
 		runtime->update_texture_bindings("MCOVERLAY", g_overlay.srv, g_overlay.srv);
+		if (g_dig.srv.handle != 0)
+			runtime->update_texture_bindings("MCDIG", g_dig.srv, g_dig.srv);
+	}
+
+	/// The dug cells to the effect's texture, when they changed.
+	void upload_dig(effect_runtime *runtime)
+	{
+		std::lock_guard<std::mutex> lock(g_digLock);
+		if (!g_digChanged)
+			return;
+		g_digChanged = false;
+		g_digOn = !g_digCells.empty();
+		if (!g_digOn)
+			return;
+		device *dev = runtime->get_device();
+		if (g_dig.tex.handle == 0)
+		{
+			if (!create_layer(dev, g_dig, 512, 512, format::r8_unorm))
+			{
+				g_dig = Layer();
+				g_digOn = false;
+				return;
+			}
+			runtime->update_texture_bindings("MCDIG", g_dig.srv, g_dig.srv);
+		}
+		subresource_data data;
+		data.data = g_digCells.data();
+		data.row_pitch = 512;
+		data.slice_pitch = 512 * 512;
+		dev->update_texture_region(data, g_dig.tex, 0);
+		std::memcpy(g_digShown, g_digOrigin, sizeof(g_digShown));
 	}
 
 	/// Upload the newest published Minecraft frame, if there is one we haven't shown yet.
@@ -421,6 +461,29 @@ namespace
 		const float tanHost = std::tan((warp ? host.fov : g_mcPose.fov) * d2r * 0.5f), tanMc = std::tan(g_mcPose.fov * d2r * 0.5f);
 		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "WarpTan"); v.handle != 0)
 			runtime->set_uniform_value_float(v, tanHost, tanMc, float(g_width) / float(g_height));
+
+		// the cells mined out of GTA's world: GTA's camera and Minecraft's (position from the cells' corner, and the
+		// camera-to-world rotation's rows), so the effect finds where each pixel's surface is among them
+		upload_dig(runtime);
+		const bool dig = g_digOn && host.valid && g_mcPose.valid;
+		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "DigOn"); v.handle != 0)
+			runtime->set_uniform_value_float(v, dig ? 1.0f : 0.0f);
+		if (dig)
+		{
+			auto pose = [&](const Pose &p, const char *pos, const char *const rows[3]) {
+				float r[3][3];
+				camera_rotation(p, r);
+				if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, pos); v.handle != 0)
+					runtime->set_uniform_value_float(v, float(p.x - g_digShown[0]), float(p.y - g_digShown[1]), float(p.z - g_digShown[2]));
+				for (int i = 0; i < 3; ++i)
+					if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, rows[i]); v.handle != 0)
+						runtime->set_uniform_value_float(v, r[i][0], r[i][1], r[i][2]);
+			};
+			const char *const hostRows[3] = {"DigHostRow0", "DigHostRow1", "DigHostRow2"};
+			const char *const mcRows[3] = {"DigMcRow0", "DigMcRow1", "DigMcRow2"};
+			pose(host, "DigHostPos", hostRows);
+			pose(g_mcPose, "DigMcPos", mcRows);
+		}
 	}
 
 	void on_reloaded_effects(effect_runtime *runtime)
@@ -432,6 +495,14 @@ namespace
 	void on_destroy_effect_runtime(effect_runtime *runtime)
 	{
 		destroy_layers(runtime->get_device());
+		device *dev = runtime->get_device();
+		if (g_dig.srv.handle != 0)
+			dev->destroy_resource_view(g_dig.srv);
+		if (g_dig.tex.handle != 0)
+			dev->destroy_resource(g_dig.tex);
+		g_dig = Layer();
+		std::lock_guard<std::mutex> lock(g_digLock);
+		g_digChanged = !g_digCells.empty(); // (uploaded again to a new runtime's texture)
 	}
 }
 
@@ -540,5 +611,18 @@ namespace compositor
 	void set_pose_lag(int frames)
 	{
 		g_poseLag = frames;
+	}
+
+	void set_dig(int ox, int oy, int oz, const unsigned char *cells)
+	{
+		std::lock_guard<std::mutex> lock(g_digLock);
+		if (cells == nullptr)
+			g_digCells.clear();
+		else
+			g_digCells.assign(cells, cells + 512 * 512);
+		g_digOrigin[0] = ox;
+		g_digOrigin[1] = oy;
+		g_digOrigin[2] = oz;
+		g_digChanged = true;
 	}
 }

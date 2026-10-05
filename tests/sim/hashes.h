@@ -326,4 +326,5 @@
 #define H_IsEntityPlayingAnim 0x1F0B79228E461EC9ull
 #define H_ClearPedTasksImmediately 0xAAA34F8A7CB32098ull
 #define H_IsThisModelABicycle 0xBF94DD42F63BDED2ull
+#define H_RemoveScriptFire 0x7FF548385680673Full
 #define H_Notify 0x202709F4C58A0424ull

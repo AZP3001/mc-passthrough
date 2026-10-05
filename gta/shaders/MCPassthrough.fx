@@ -8,9 +8,13 @@
 texture MCWorldTex : MCWORLD;
 texture MCDepthTex : MCDEPTH;
 texture MCOverlayTex : MCOVERLAY;
+// The cells mined out of GTA's world round the camera (64 x 64 x 64 as 64 slices of 64 x 64: slice y at column
+// (y % 8) * 64, row (y / 8) * 64): 1 dug out, about 0.5 one of the blocks Minecraft fills round a hole with.
+texture MCDigTex : MCDIG;
 sampler sWorld { Texture = MCWorldTex; AddressU = CLAMP; AddressV = CLAMP; };
 sampler sDepth { Texture = MCDepthTex; MinFilter = POINT; MagFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
 sampler sOverlay { Texture = MCOverlayTex; AddressU = CLAMP; AddressV = CLAMP; };
+sampler sDig { Texture = MCDigTex; MinFilter = POINT; MagFilter = POINT; MipFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
 
 // x = near, y = far, z = flags (1: [0,1] depth, 2: rows bottom-up, 4: reversed Z). Set by the add-on.
 uniform float3 McPlanes = float3(0.05, 2048.0, 7.0);
@@ -94,6 +98,17 @@ uniform float4 SteveMc = float4(0.0, 0.0, 0.0, 0.0);
 uniform float4 SteveUp = float4(0.0, 1.0, 0.0, 0.0);
 uniform float SteveBias < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.01; ui_label = "Steve's depth allowance (m)";
 	ui_tooltip = "How far behind GTA's surfaces Steve may still show (he's wider than GTA's character)."; > = 0.2;
+// Set by the add-on while cells are mined out of GTA's world: GTA's camera and Minecraft's (position from the cells'
+// corner, and the rows of the camera-to-world rotation).
+uniform float DigOn = 0.0;
+uniform float3 DigHostPos = float3(0.0, 0.0, 0.0);
+uniform float3 DigHostRow0 = float3(1.0, 0.0, 0.0);
+uniform float3 DigHostRow1 = float3(0.0, 1.0, 0.0);
+uniform float3 DigHostRow2 = float3(0.0, 0.0, 1.0);
+uniform float3 DigMcPos = float3(0.0, 0.0, 0.0);
+uniform float3 DigMcRow0 = float3(1.0, 0.0, 0.0);
+uniform float3 DigMcRow1 = float3(0.0, 1.0, 0.0);
+uniform float3 DigMcRow2 = float3(0.0, 0.0, 1.0);
 uniform float MarchThickness < ui_type = "drag"; ui_min = 0.05; ui_max = 3.0; ui_step = 0.05; ui_label = "Re-projection thickness (m)";
 	ui_tooltip = "How deep Minecraft's surfaces count when re-projecting: smaller stops thin things smearing on camera moves."; > = 0.6;
 
@@ -190,6 +205,43 @@ float3 relight(float3 c, float2 uv, float zm)
 	c = lerp(c, c * grade, GradeMatch * (1.0 - saturate((max(c.r, max(c.g, c.b)) - 0.45) * 2.5)));
 	const float h = saturate((1.0 - exp(-max(zm - HazeStart, 0.0) / HazeDistance)) * HazeStrength);
 	return lerp(c, M, h);
+}
+
+/// The cell at p (from the dug cells' corner): 1 dug out, about 0.5 a block filling round a hole, 0 neither.
+float dig_cell(float3 p)
+{
+	const float3 c = floor(p);
+	if (any(c < 0.0) || any(c > 63.0))
+		return 0.0;
+	const float row = floor(c.y / 8.0);
+	const float2 texel = float2((c.y - row * 8.0) * 64.0 + c.x, row * 64.0 + c.z);
+	return tex2Dlod(sDig, float4((texel + 0.5) / 512.0, 0, 0)).r;
+}
+
+/// Whether a GTA surface point (GTA's camera space) is in a cell dug out (or on its edge, just in front of it along the
+/// view: the street over a hole dug under it).
+bool dug_host(float3 pc)
+{
+	const float3 p = DigHostPos + float3(dot(DigHostRow0, pc), dot(DigHostRow1, pc), dot(DigHostRow2, pc));
+	const float3 d = normalize(float3(dot(DigHostRow0, pc), dot(DigHostRow1, pc), dot(DigHostRow2, pc)));
+	return dig_cell(p) > 0.75 || dig_cell(p + d * 0.04) > 0.75;
+}
+
+/// Whether a point of Minecraft's picture (its camera's space) is on the outside of a block filling round a hole (a face
+/// not on the hole: GTA's own wall or street is there, and the block must not show through it or stick out of it).
+bool filler_outside(float3 qm)
+{
+	const float3 p = DigMcPos + float3(dot(DigMcRow0, qm), dot(DigMcRow1, qm), dot(DigMcRow2, qm));
+	float fill = 0.0, dug = 0.0;
+	[unroll] for (int a = 0; a < 3; ++a)
+	{
+		float3 o = 0.0;
+		o[a] = 0.03;
+		const float v0 = dig_cell(p + o), v1 = dig_cell(p - o);
+		fill = max(fill, max(v0 > 0.25 && v0 < 0.75 ? 1.0 : 0.0, v1 > 0.25 && v1 < 0.75 ? 1.0 : 0.0));
+		dug = max(dug, max(v0 > 0.75 ? 1.0 : 0.0, v1 > 0.75 ? 1.0 : 0.0));
+	}
+	return fill > 0.5 && dug < 0.5;
 }
 
 float3 bands(float z)
@@ -314,14 +366,16 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 	// Where this GTA pixel's view ray lands in Minecraft's frame.
 	float2 muv = ouv;
 	bool inside = true;
-	const float zh = host_linear(tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
+	const float zhSeen = host_linear(tex2Dlod(ReShade::DepthBuffer, float4(uv, 0, 0)).x);
+	const float3 ray = float3((uv.x * 2.0 - 1.0) * WarpTan.x * BUFFER_WIDTH * BUFFER_RCP_HEIGHT, (1.0 - uv.y * 2.0) * WarpTan.x, -1.0);
 	// how far behind GTA's surface Minecraft may still show: more where that surface is seen at a grazing angle
-	const float allow = min(DepthBias + SlopeBias * abs(ddy(zh)), max(MaxBias, DepthBias));
+	const float allow = min(DepthBias + SlopeBias * abs(ddy(zhSeen)), max(MaxBias, DepthBias));
+	// GTA's wall, street or ground mined out here: it isn't there (whatever Minecraft has behind it shows: the hole's sides)
+	const float zh = DigOn > 0.5 && zhSeen < 2000.0 && dug_host(ray * zhSeen) ? 1e5 : zhSeen;
 	float zm = 1e9;
 	float steveH = -1.0; // how high on Steve this pixel is (-1: not Steve)
 	if (Reproject)
 	{
-		const float3 ray = float3((uv.x * 2.0 - 1.0) * WarpTan.x * BUFFER_WIDTH * BUFFER_RCP_HEIGHT, (1.0 - uv.y * 2.0) * WarpTan.x, -1.0);
 		const float zFar = max(min(zh + allow + SteveBias + 0.5, 400.0), 0.5);
 		inside = false; // (found by the marches below, or not at all)
 		// Steve moves with the camera (it follows him, a car carries both): his part of the picture moves by the camera's
@@ -353,6 +407,12 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 				inside = false;
 				zm = 1e9;
 			}
+		}
+		// the outside of a block filling round a hole: GTA's surface shows there, not the block
+		if (inside && DigOn > 0.5 && filler_outside(qm))
+		{
+			inside = false;
+			zm = 1e9;
 		}
 	}
 	float4 world = inside ? tex2D(sWorld, muv) : 0.0;

@@ -398,6 +398,8 @@ namespace natives
 	inline BOOL IsEntityPlayingAnim(Entity e, const char *d, const char *a) { return invoke<BOOL>(0x1F0B79228E461EC9, e, d, a, 3); }
 	inline void ClearPedTasksImmediately(Ped p) { invoke<Void>(0xAAA34F8A7CB32098, p); }
 	inline BOOL IsThisModelABicycle(Hash m) { return invoke<BOOL>(0xBF94DD42F63BDED2, m); }
+	// Minecraft's fire as GTA's own (it spreads to grass, people and cars as GTA's fires do).
+	inline void RemoveScriptFire(int fire) { invoke<Void>(0x7FF548385680673F, fire); }
 
 	inline void Notify(const char *text)
 	{
