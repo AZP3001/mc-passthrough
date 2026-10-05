@@ -1,0 +1,980 @@
+{
+  "report": "MC Passthrough full code audit",
+  "date": "2026-10-05",
+  "commit": "7340e58",
+  "scope": "gta/src (script.cpp, compositor.cpp, ws.cpp), gta/shaders/MCPassthrough.fx, gta/install.sh, mc/src (all Java), build files",
+  "note": "Nothing was changed: this is a list only. 'priority': high = breaks play or loses your stuff, medium = clearly wrong but you can live with it, low = small bug/perf/polish, info = leftover or unused code. 'confidence' says whether it was proven by reading the code or still needs an in-game test.",
+  "counts": {
+    "high": 6,
+    "medium": 18,
+    "low": 37,
+    "info": 5
+  },
+  "total": 66,
+  "issues": [
+    {
+      "number": 1,
+      "priority": "high",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "MC disconnects / F7 off during an elytra flight or a flying car: camera and player stay stuck",
+      "where": [
+        "gta/src/script.cpp:6236 (the `if (!on)` branch in tick)",
+        "gta/src/script.cpp:756 drive_set",
+        "gta/src/script.cpp:4824 car_fly_end"
+      ],
+      "cause": "When the link goes down (Minecraft crashes, closes, or F7 is pressed) tick() takes the `!on` branch and returns early. That branch turns off walking, the free-look camera and the aim camera, but never calls drive_set(ped, false) or car_fly_end().",
+      "what_happens": "During an elytra flight the scripted chase camera keeps rendering, GTA's player stays frozen with collision off, and nothing moves it any more. With a flying car, the car stays frozen in mid air with you in it. You can't play until Minecraft reconnects (and even then only if the flight logic happens to end it).",
+      "how_to_fix": "In the `if (!on)` branch add: `if (g_drive.on) drive_set(ped, false, true);` and `car_fly_end();` (and `g_drive.armed = false;`).",
+      "what_the_fix_does": "Losing Minecraft or pressing F7 mid-flight drops you back to normal GTA control: camera back, player unfrozen with collision, the car falls and drives again."
+    },
+    {
+      "number": 2,
+      "priority": "high",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Walking near a pickup (money, weapon, health) teleports you onto it in Minecraft movement",
+      "where": [
+        "gta/src/script.cpp:4512 pickups_tick",
+        "gta/src/script.cpp:4578 (walk_tick 'something else moved GTA's player' check)"
+      ],
+      "cause": "pickups_tick puts GTA's ped on top of a pickup up to 1.8 m away so GTA collects it. On the next frame walk_tick sees the ped more than 1 m from where Minecraft's player is, thinks a mission teleported it, and sends a 'pset' that moves Minecraft's player onto the pickup.",
+      "what_happens": "Any pickup between 1 and 1.8 m away yanks you onto it, kills your momentum (pset zeroes velocity), can pull you off a ledge while bridging, or into a wall. Pickups GTA refuses (full ammo, mission items) keep doing it for 1.5 s each.",
+      "how_to_fix": "Remember that pickups_tick moved the ped (e.g. a `g_walk.pickupHold` flag or holdUntil != 0) and skip the teleport check in walk_tick while it is set. Better: after GTA collects (or 250 ms), always put the ped back on g_walk before the next walk_tick, and never feed the ped's pickup position back into g_walk.",
+      "what_the_fix_does": "Pickups are still collected, but your Minecraft player never jumps or snaps toward them."
+    },
+    {
+      "number": 3,
+      "priority": "high",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Automatic re-levelling fires every 1.5 s on slopes: ground resets, server lag spikes, movement hitches",
+      "where": [
+        "gta/src/script.cpp:3782 maybe_relevel",
+        "gta/src/script.cpp:6312 (relevel block in tick)",
+        "mc/.../WorldBridge.java:120 removeGround, :471 sync"
+      ],
+      "cause": "maybe_relevel sets g_haveOffset=false whenever the ground under you is not within 0.08 of a whole block and no Minecraft blocks are within 24 blocks. On any slope that is true again after a short walk. A relevel sends 'clear' (Minecraft removes every barrier in a 160x160 area and all GTA water), deletes all block props, asks for 'blocksync' (the server scans about 1 million block positions in one tick), and in Minecraft movement sends a pset.",
+      "what_happens": "On hills: a stutter/hitch every ~1.5 s in Minecraft movement (pset zeroes your speed), short server freezes, mobs/items/arrows briefly losing their ground and falling, GTA water vanishing for a moment while swimming. A likely part of 'movement feels off/stuttery'.",
+      "how_to_fix": "Only relevel on real teleports (the >50 m jump check), on F8, and on connect. If you keep the automatic one: don't run it while g_walk.on, g_drive.on or while moving, use a bigger threshold (e.g. 0.3), and rate-limit it to e.g. once per 30 s. Also make blocksync incremental (spread the scan over ticks) instead of 1M checks in one tick.",
+      "what_the_fix_does": "Walking up and down hills is smooth, the Minecraft ground stays put, no periodic lag spikes."
+    },
+    {
+      "number": 4,
+      "priority": "high",
+      "type": "data-loss",
+      "confidence": "confirmed (read in the code)",
+      "title": "Your chestplate or elytra is deleted every time the Minecraft world loads",
+      "where": [
+        "mc/src/client/java/dev/rehan/passthrough/client/PassthroughClient.java:249"
+      ],
+      "cause": "On every join the code does `player.setItemSlot(EquipmentSlot.CHEST, ItemStack.EMPTY)` to make sure a leftover glide doesn't continue. It deletes whatever is in the chest slot.",
+      "what_happens": "Every game start you lose the elytra or chestplate you were wearing (with all its enchantments).",
+      "how_to_fix": "Only remove the chest item if it was put there by glide() (save a flag/tag such as 'passthrough_glide' on that elytra and only remove that one). For the 'no leftover glide' goal, `stopFallFlying()` alone is enough.",
+      "what_the_fix_does": "Your armour and elytra survive restarts; only the temporary director elytra is removed."
+    },
+    {
+      "number": 5,
+      "priority": "high",
+      "type": "bug",
+      "confidence": "likely (logic says so, not seen in game)",
+      "title": "Shader: blocks within 0.6 m of Steve (the floor under him, walls he touches) are treated as part of Steve",
+      "where": [
+        "gta/shaders/MCPassthrough.fx:292 on_steve",
+        "gta/shaders/MCPassthrough.fx:331-356 (Steve march and the 'old place' rejection)"
+      ],
+      "cause": "on_steve() accepts any point from 0.25 m below his feet up to his head inside a 0.6 m radius column. The top of the block he stands on (height 0) and any wall/block he is touching are inside that column. Those pixels get Steve's motion correction instead of the world's, and in the normal path they are thrown away (`inside = false`) as 'Steve's old place'.",
+      "what_happens": "The floor patch under Steve and blocks right next to him slide with him when he moves, and where the Steve path misses them they are not drawn at all, so GTA shows through. Very likely part of 'blocks near me are see-through / stop rendering', especially when bridging or pillaring.",
+      "how_to_fix": "Tighten the column: start it a little above the feet (h > 0.05), use a radius of about 0.4, and only reject in the normal path when the MC depth there is within Steve's depth range. The proper fix is a Steve mask from Minecraft: render the local player into a separate mask (or set a flag in the exported alpha/a 4th layer) so the shader knows exactly which pixels are Steve.",
+      "what_the_fix_does": "Only Steve's own pixels move with Steve; the ground and walls next to him stay solid and in place."
+    },
+    {
+      "number": 6,
+      "priority": "high",
+      "type": "bug",
+      "confidence": "needs testing in game",
+      "title": "Blocks look see-through: root cause still not proven (depth buffer and colour matching are the main suspects)",
+      "where": [
+        "gta/install.sh (ReShade.ini written without depth settings)",
+        "gta/shaders/MCPassthrough.fx:175 relight, :44-53 SaturationMatch/GradeMatch/Haze defaults"
+      ],
+      "cause": "Two things can make solid blocks look transparent: (1) ReShade may pick the wrong GTA depth buffer (GTA V usually needs ReShade's 'copy depth buffer before clear operations' / the right buffer selected in the Add-ons > Generic Depth tab). With a wrong or half-cleared buffer the depth test hides blocks in patches. (2) The shader deliberately pulls blocks toward GTA's surroundings: light tint, 'Match GTA saturation', 'Match GTA colour grade' and haze toward GTA's average colour. Together they make blocks take on the colours behind them, which reads as 'ghostly'.",
+      "what_happens": "Blocks appear partly transparent or vanish in patches even though their alpha is 1.",
+      "how_to_fix": "Test in game with the shader's DebugView: 'GTA depth (1 m bands)' must show clean bands on GTA's world (if not, fix the depth buffer in ReShade's Generic Depth tab and write those settings into install.sh's ReShade.ini). Then set SaturationMatch, GradeMatch, HazeStrength and LightTint to 0: if blocks look solid then, lower those defaults.",
+      "what_the_fix_does": "You find out which one it is, and the matching fix makes blocks fully opaque."
+    },
+    {
+      "number": 7,
+      "priority": "medium",
+      "type": "bug",
+      "confidence": "likely (logic says so, not seen in game)",
+      "title": "Shader: GTA shows through blocks right behind Steve while he moves (disocclusion holes)",
+      "where": [
+        "gta/shaders/MCPassthrough.fx:346-356"
+      ],
+      "cause": "Minecraft exports one colour and one depth layer. Where Steve stood in Minecraft's (slightly older) frame, the blocks behind him are simply not in the picture. The shader correctly refuses to draw 'old Steve' there, but has nothing else to draw, so GTA shows through.",
+      "what_happens": "A Steve-shaped sliver of 'missing block' next to Steve whenever he moves in front of Minecraft blocks.",
+      "how_to_fix": "Either keep marching past Steve's pixels and fill from the nearest non-Steve neighbour pixels (cheap, approximate), or export a second world layer rendered without the local player (exact, costs one extra pass).",
+      "what_the_fix_does": "Blocks behind Steve stay solid while he walks."
+    },
+    {
+      "number": 8,
+      "priority": "medium",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Every wind charge (and every breeze's) causes a real GTA grenade explosion",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/mixin/ServerExplosionMixin.java:26",
+        "gta/src/script.cpp:3673-3692 (explosion handler)"
+      ],
+      "cause": "Wind charges explode through ServerExplosion like TNT does, so they are reported as 'explosion'. GTA turns any radius below 3.5 into AddExplosion type 0 (grenade). The separate 'wind' projectile handling then also does its own wind burst.",
+      "what_happens": "Throwing a wind charge (meant to be harmless knockback) blows up cars and kills people.",
+      "how_to_fix": "In ServerExplosionMixin skip sources 'wind_charge' and 'breeze_wind_charge' (or skip explosions whose block interaction is TRIGGER / that do no damage).",
+      "what_the_fix_does": "Wind charges only push things, as in Minecraft."
+    },
+    {
+      "number": 9,
+      "priority": "medium",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Vanilla Nether/End portals never work, even without GTA attached",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/mixin/PortalMixin.java:17"
+      ],
+      "cause": "setAsInsidePortal is cancelled on the server whenever the mod is installed; there is no `Passthrough.active` check.",
+      "what_happens": "With the mod installed you can never travel to the Nether or End in normal play.",
+      "how_to_fix": "Add `if (!Passthrough.active) return;` at the start of the inject.",
+      "what_the_fix_does": "Portals work normally when GTA is not attached."
+    },
+    {
+      "number": 10,
+      "priority": "medium",
+      "type": "data-loss",
+      "confidence": "confirmed (read in the code)",
+      "title": "Leaving the Nether deletes every lava, fire and magma block you placed yourself, and every hostile mob",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/Nether.java:495-501 (close)",
+        "Nether.java:520 MobWar.discardFighters"
+      ],
+      "cause": "`hot` tracks every hot block placed anywhere while attached (including yours). close() sets all of them to air. It also calls discardFighters, which removes every hostile mob in the overworld, not just the Nether's.",
+      "what_happens": "After walking back through the portal your own lava builds, fires and magma floors are gone, and so are mobs you spawned or kept on purpose.",
+      "how_to_fix": "Only restore/remove blocks the Nether itself placed (they are already in `changed`) and only discard mobs the Nether spawned (tag them like TheEnd does with its TAG).",
+      "what_the_fix_does": "Closing the Nether only undoes the Nether."
+    },
+    {
+      "number": 11,
+      "priority": "medium",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Minecraft's own setup commands reset GTA's clock and weather (noon / clear) on world load and when the Nether closes",
+      "where": [
+        "mc/.../client/PassthroughClient.java:220-221 (SETUP: time set noon, weather clear)",
+        "mc/.../Nether.java:146, :522",
+        "mc/.../mixin/CommandsMixin.java",
+        "mc/.../HostBridge.java:310-325"
+      ],
+      "cause": "Commands run by the mod itself go through Commands.performCommand, which CommandsMixin hooks to forward /time and /weather to GTA.",
+      "what_happens": "Every time Minecraft's world loads while GTA is connected GTA jumps to 12:00 with clear weather. After leaving the Nether, GTA's clock is first restored, then overwritten to noon. During the Nether's opening the clock is also set from Minecraft every second.",
+      "how_to_fix": "Pass a flag (or use a CommandSourceStack marker) so mod-internal commands are not forwarded, e.g. a static `HostBridge.internal = true` around WorldBridge.command(...), checked in HostBridge.command.",
+      "what_the_fix_does": "Only /time and /weather that you type change GTA's time and weather."
+    },
+    {
+      "number": 12,
+      "priority": "medium",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "After an elytra flight ends you are left in creative flight, even in survival",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/WorldBridge.java:554 glide(false)"
+      ],
+      "cause": "glide(false) always sets `abilities.flying = true`.",
+      "what_happens": "A survival player without /fly hovers after landing.",
+      "how_to_fix": "Restore the flying state from before the glide, and only if `abilities.mayfly` is true.",
+      "what_the_fix_does": "Landing puts you back exactly as you were before the flight."
+    },
+    {
+      "number": 13,
+      "priority": "medium",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "The totem of undying doesn't save you from one-hit deaths",
+      "where": [
+        "gta/src/script.cpp:5143"
+      ],
+      "cause": "The totem only acts when health is already below 1/8 and the ped is still alive. A big hit (explosion, car, fall, sniper) goes from healthy to dead in one frame.",
+      "what_happens": "Most GTA deaths are one big hit, so the totem rarely works.",
+      "how_to_fix": "While a totem is held, give the ped a hidden health buffer (raise max health and health by a safe amount, or use SET_PLAYER_INVINCIBLE_BUT_HAS_REACTIONS and watch for the damage), then trigger the totem when the 'real' health would drop below zero.",
+      "what_the_fix_does": "Holding a totem saves you from any death once, like in Minecraft."
+    },
+    {
+      "number": 14,
+      "priority": "medium",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Splash potions on yourself apply twice (harming hurts double, healing heals twice)",
+      "where": [
+        "gta/src/script.cpp:1026-1034 potion_splash (player part)",
+        "mc/.../HostBridge.java:118-123 (pdmg/pheal)"
+      ],
+      "cause": "GTA's potion_splash damages/heals the player within 4.5 m, and Minecraft also applies the potion to its player, whose health change is sent back as 'pdmg'/'pheal'.",
+      "what_happens": "Your own harming potion does about double damage to you; healing is doubled too.",
+      "how_to_fix": "Remove the player part of potion_splash (Minecraft already handles its own player).",
+      "what_the_fix_does": "Potions affect you once, the Minecraft way."
+    },
+    {
+      "number": 15,
+      "priority": "medium",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "/gta tp with negative or decimal coordinates goes to the wrong place",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/Passthrough.java:151"
+      ],
+      "cause": "The /gta argument is cleaned with replaceAll(\"[^A-Za-z0-9_ ]\", \"\"), which also deletes '-' and '.'.",
+      "what_happens": "`/gta tp -1200.5 300` becomes `tp 12005 300`. `/gta boost 12.5` and traffic/crowds decimals break the same way.",
+      "how_to_fix": "Allow '-' and '.' in the regex: \"[^A-Za-z0-9_ .\\\\-]\".",
+      "what_the_fix_does": "Teleporting to any map coordinate works."
+    },
+    {
+      "number": 16,
+      "priority": "medium",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Lava deletes any GTA object within 60 m that touches it, including mission objects, attached items and pickups",
+      "where": [
+        "gta/src/script.cpp:2154-2191 (hot_tick objects part)"
+      ],
+      "cause": "The object loop only skips block props. Everything else in lava is made dynamic, set on fire, made a mission entity and deleted 4 s later: attached objects (a ped's phone, the player's parachute/bag), pickups (money), mission objects, and Steve's visible gun model (g_gunFit.held).",
+      "what_happens": "Missions can break (a needed object deleted), the visible gun can vanish, money can be destroyed.",
+      "how_to_fix": "Skip objects that are attached, mission entities, pickups (IsObjectAPickup / IsObjectAPortablePickup) and g_gunFit.held.",
+      "what_the_fix_does": "Lava still melts street furniture, but never breaks missions or your own things."
+    },
+    {
+      "number": 17,
+      "priority": "medium",
+      "type": "security",
+      "confidence": "confirmed (read in the code)",
+      "title": "Any website open in your browser can control Minecraft and GTA through the WebSocket",
+      "where": [
+        "mc/src/client/java/dev/rehan/passthrough/client/HostLink.java:60 onOpen"
+      ],
+      "cause": "The server listens on 127.0.0.1 with no Origin check and no token. Browsers allow any web page to open ws://127.0.0.1:25599. A 'cmd' message runs any server command as op; 'gta' messages are relayed to GTA's director (teleport, explode, spawn).",
+      "what_happens": "A malicious page could run Minecraft commands (ops, /fill, /kill), spawn things or blow things up in GTA while you play.",
+      "how_to_fix": "In onOpen, close the connection if the handshake has an Origin header (browsers always send one, the GTA plugin never does). Optionally add a shared secret sent in the first message.",
+      "what_the_fix_does": "Only the GTA plugin (and your local scripts) can connect."
+    },
+    {
+      "number": 18,
+      "priority": "medium",
+      "type": "crash",
+      "confidence": "confirmed (read in the code)",
+      "title": "A malformed WebSocket frame can crash GTA",
+      "where": [
+        "gta/src/ws.cpp:204 (std::string payload(size))"
+      ],
+      "cause": "The frame length is read from the network (up to 2^64) and used directly to allocate a string in the background thread. A huge length throws std::bad_alloc / length_error there, nothing catches it, and the process calls std::terminate.",
+      "what_happens": "If anything else listens on port 25599, or a frame is corrupted, GTA crashes to desktop.",
+      "how_to_fix": "Reject frames above a limit (e.g. 16 MB): close and reconnect. Also clear `partial` on every disconnect.",
+      "what_the_fix_does": "Bad data only drops the connection; GTA keeps running."
+    },
+    {
+      "number": 19,
+      "priority": "medium",
+      "type": "crash",
+      "confidence": "likely (logic says so, not seen in game)",
+      "title": "GTA can show an abort/crash dialog on exit: the WebSocket thread is never stopped",
+      "where": [
+        "gta/src/script.cpp:6679 DllMain DLL_PROCESS_DETACH",
+        "gta/src/ws.h (std::thread member)"
+      ],
+      "cause": "g_ws is a global with a std::thread that is never joined or detached. When the DLL is unloaded the std::thread destructor runs with a joinable thread, which calls std::terminate().",
+      "what_happens": "Possible crash/abort message when closing GTA.",
+      "how_to_fix": "Detach the thread after starting it (it only touches the global object), or call g_ws.stop() when the script ends (not from DllMain during process exit, where join can deadlock).",
+      "what_the_fix_does": "Clean exit."
+    },
+    {
+      "number": 20,
+      "priority": "medium",
+      "type": "data-loss",
+      "confidence": "confirmed (read in the code)",
+      "title": "Tamed or named animals disappear when their chunk loads (turned into GTA animals)",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/HostBridge.java:65 onEntityLoad"
+      ],
+      "cause": "ENTITY_LOAD fires for entities loaded from the save as well as new spawns. Every cow/pig/wolf/cat/... that loads while attached is discarded and replaced by a GTA animal.",
+      "what_happens": "Your tamed wolf or cat, a named pet, or animals in a pen vanish.",
+      "how_to_fix": "Only convert entities that were just spawned (spawn eggs, natural spawns) and skip tamed, named, leashed or persistence-required ones.",
+      "what_the_fix_does": "Your pets and farms stay."
+    },
+    {
+      "number": 21,
+      "priority": "medium",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Shield / fire-resistance / effect protection is lost after F9, a character switch, or another proof change",
+      "where": [
+        "gta/src/script.cpp:5098-5117 (effects block)",
+        "gta/src/script.cpp:5211-5219 (shield block)",
+        "gta/src/script.cpp:565 apply_rules"
+      ],
+      "cause": "Two separate places call SetEntityProofs, each only when its own static 'last applied' value changes, and each overwrites the other's proofs. apply_rules (F9) resets all proofs to off but the statics still think they're applied. After a character switch the new ped never gets them.",
+      "what_happens": "The shield sometimes doesn't block bullets, fire resistance stops working, speed/strength effects aren't applied to a new character.",
+      "how_to_fix": "Build the proofs in one function from all inputs (god mode, shield, fire resistance) and apply them whenever any input or the ped changes.",
+      "what_the_fix_does": "Shields and effects always protect you as expected."
+    },
+    {
+      "number": 22,
+      "priority": "medium",
+      "type": "bug",
+      "confidence": "likely (logic says so, not seen in game)",
+      "title": "An enderman stealing a car with a driver in it fails, and the car stays a mission entity forever",
+      "where": [
+        "gta/src/script.cpp:5693-5699 enderthief_message"
+      ],
+      "cause": "The old driver is only given TaskLeaveVehicle (it takes time), then CreatePedInsideVehicle is called for the same driver seat right away. That usually fails, and the function returns after the car was already marked as a mission entity.",
+      "what_happens": "Thefts of cars that have a driver often don't happen, and those cars never despawn (memory/entity leak).",
+      "how_to_fix": "Move the old driver out instantly (ClearPedTasksImmediately + set them beside the car) before creating the thief, or wait for the seat to be free; on failure call SetEntityAsNoLongerNeeded on the car.",
+      "what_the_fix_does": "Endermen reliably steal occupied cars, nothing leaks."
+    },
+    {
+      "number": 23,
+      "priority": "medium",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Every install wipes your ReShade tweaks; --remove deletes your own ReShade.ini",
+      "where": [
+        "gta/install.sh (ReShadePreset.ini written every time; FILES list used by --remove)"
+      ],
+      "cause": "install.sh always overwrites ReShadePreset.ini, which is where ReShade stores the effect's slider values. --remove deletes ReShade.ini and ReShadePreset.ini even if they existed before the mod.",
+      "what_happens": "Any slider you changed in the ReShade overlay resets on every update. Uninstalling removes another mod's ReShade setup.",
+      "how_to_fix": "Only add the technique line if missing (keep other lines), and only remove files the installer created (write a small manifest on install).",
+      "what_the_fix_does": "Your shader settings survive updates; uninstall only removes the mod's files."
+    },
+    {
+      "number": 24,
+      "priority": "medium",
+      "type": "perf",
+      "confidence": "confirmed (read in the code)",
+      "title": "Server scans about a million blocks in one tick on every relevel/connect (blocksync)",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/WorldBridge.java:471 sync"
+      ],
+      "cause": "sync(64) loops 129 x 129 x 65 positions on the server thread in one go.",
+      "what_happens": "A noticeable freeze each time (made worse by the automatic relevel on slopes).",
+      "how_to_fix": "Spread the scan over several ticks or scan chunk sections and skip sections that are only air/barrier (as removeGround already does with maybeHas).",
+      "what_the_fix_does": "No hitch when the ground is rebuilt."
+    },
+    {
+      "number": 25,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "With /fly on (or while swimming) holding Space never climbs ledges and F never climbs ladders",
+      "where": [
+        "gta/src/script.cpp:6340-6342"
+      ],
+      "cause": "`flying` includes g_flyAllowed (only means flying is allowed) and swimming, and while it is true walk_climb and walk_ladder are skipped.",
+      "what_happens": "Once you enable /fly you can't use GTA ledge climbs or ladders even while walking.",
+      "how_to_fix": "Use g_mcFlying (actually flying) instead of g_flyAllowed, and keep walk_ladder (F key) available in all cases.",
+      "what_the_fix_does": "Ledges and ladders work whenever you are on foot and not actually flying."
+    },
+    {
+      "number": 26,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Speed/slowness splash potions on GTA people do nothing lasting",
+      "where": [
+        "gta/src/script.cpp:975, :978"
+      ],
+      "cause": "SetPedMoveRateOverride only lasts one frame; it is called once.",
+      "what_happens": "Slowness/speed potions have no visible effect on NPCs (only the ragdoll part).",
+      "how_to_fix": "Store the affected peds with an end time (like g_potionHidden) and call SetPedMoveRateOverride every frame until then.",
+      "what_the_fix_does": "NPCs really slow down or speed up for a while."
+    },
+    {
+      "number": 27,
+      "priority": "low",
+      "type": "polish",
+      "confidence": "confirmed (read in the code)",
+      "title": "Arrows and tridents hitting people/cars make a sniper-rifle gunshot sound",
+      "where": [
+        "gta/src/script.cpp:1243"
+      ],
+      "cause": "ShootSingleBulletBetweenCoords is called with the default audible = TRUE and the sniper weapon.",
+      "what_happens": "Every arrow hit sounds like a sniper shot (and may alert police like a gunshot).",
+      "how_to_fix": "Pass audible FALSE (as break_glass already does).",
+      "what_the_fix_does": "Arrow hits are silent like Minecraft arrows."
+    },
+    {
+      "number": 28,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Summoned cops (and the director's peds) are created as civilians",
+      "where": [
+        "gta/src/script.cpp:5603 summon",
+        "gta/src/script.cpp:2867 handle_director"
+      ],
+      "cause": "CreatePed always uses ped type 26 (civilian male).",
+      "what_happens": "/summon cop gives a cop that doesn't behave like police (no relationship to the cop group).",
+      "how_to_fix": "Use type 6 for cop models (and 27/29 for army) or set the relationship group to COP after creating.",
+      "what_the_fix_does": "Summoned cops act like real police."
+    },
+    {
+      "number": 29,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Mob ground patches use the water surface as ground",
+      "where": [
+        "gta/src/script.cpp:1910 sample_patches"
+      ],
+      "cause": "sample_ground probes with ignoreWater TRUE, sample_patches with FALSE.",
+      "what_happens": "Around mobs and squad cops, Minecraft gets a barrier floor on top of GTA water: mobs walk on water.",
+      "how_to_fix": "Use ignoreWater TRUE in sample_patches too (and send 'gwater' for those columns like sample_ground does).",
+      "what_the_fix_does": "Mobs swim in GTA water everywhere."
+    },
+    {
+      "number": 30,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Minecraft water repairs wrecked cars' engines",
+      "where": [
+        "gta/src/script.cpp:2296-2297 water_tick"
+      ],
+      "cause": "Any car in Minecraft water with engine health below 50 is set to 50, including destroyed ones.",
+      "what_happens": "A burnt-out wreck pushed into water gets a working engine back.",
+      "how_to_fix": "Only do it for cars that are on fire and not dead (IsEntityDead / IsVehicleDriveable).",
+      "what_the_fix_does": "Water puts out fires but doesn't resurrect wrecks."
+    },
+    {
+      "number": 31,
+      "priority": "low",
+      "type": "design",
+      "confidence": "confirmed (read in the code)",
+      "title": "One fire block under a car instantly sets engine health to -1",
+      "where": [
+        "gta/src/script.cpp:2126-2129 hot_tick"
+      ],
+      "cause": "Any fire cell under the footprint sets engine health to -1 (engine fire) immediately.",
+      "what_happens": "Even a car driving over a single fire block is doomed to explode.",
+      "how_to_fix": "Lower engine health gradually per fire cell per tick (as lava already does), and only ignite after a short time in the fire.",
+      "what_the_fix_does": "Cars catch fire from lasting fire, not from brushing past one block."
+    },
+    {
+      "number": 32,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Some actions freeze the game for up to 5 seconds while waiting for models or loading",
+      "where": [
+        "gta/src/script.cpp:5570 summon",
+        ":5781 /waypoint",
+        ":5370 /gta tp",
+        ":5689 enderthief",
+        ":1443 army_model",
+        ":2816 director teleport"
+      ],
+      "cause": "These run inside the message handler with WAIT(0) loops (up to 120-300 frames). While they wait, the rest of tick() doesn't run: no camera sent to Minecraft, no walking, no props.",
+      "what_happens": "Short freezes or a frozen Minecraft view when summoning a model that isn't loaded yet, teleporting, or when an enderman steals a car.",
+      "how_to_fix": "Queue the request (like g_animalQueue) and finish it in a later frame when the model/scene is ready.",
+      "what_the_fix_does": "No freezes; things appear a moment later instead."
+    },
+    {
+      "number": 33,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Text with quotes or backslashes is cut off in messages to GTA",
+      "where": [
+        "gta/src/script.cpp:540 json_str",
+        "gta/src/script.cpp:516 json_value"
+      ],
+      "cause": "json_str stops at the first '\"' and doesn't understand escapes (\\\", \\\\, \\n). json_value can also match a key name that appears inside another string value.",
+      "what_happens": "Notifications ('note'), model names or commands containing quotes are truncated or parsed wrongly.",
+      "how_to_fix": "Use a small real JSON parser (e.g. nlohmann/json single header, or picojson).",
+      "what_the_fix_does": "Every message is read correctly."
+    },
+    {
+      "number": 34,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Long messages built with sendf are silently cut at 8 KB",
+      "where": [
+        "gta/src/script.cpp:411 sendf"
+      ],
+      "cause": "vsnprintf into an 8192-byte buffer truncates without warning, producing broken JSON.",
+      "what_happens": "Large 'gtainfo' replies (mobinfo, probe) can become invalid; Minecraft logs 'bad host message'.",
+      "how_to_fix": "Measure first (vsnprintf with nullptr) and use a std::string of the right size.",
+      "what_the_fix_does": "No broken messages."
+    },
+    {
+      "number": 35,
+      "priority": "low",
+      "type": "perf",
+      "confidence": "confirmed (read in the code)",
+      "title": "Sampled-ground and GTA-water caches grow forever; the water map is copied on every update",
+      "where": [
+        "gta/src/script.cpp:479 g_sampled",
+        "mc/src/main/java/dev/rehan/passthrough/HostWater.java:29 update"
+      ],
+      "cause": "g_sampled is only cleared on a relevel; HostWater keeps every water column ever seen and copies the whole map for every 'gwater' message.",
+      "what_happens": "Memory slowly grows on long sessions, and after crossing a lot of sea each water update copies tens of thousands of entries.",
+      "how_to_fix": "Drop entries far from the player (e.g. > 200 m) now and then; for HostWater use a ConcurrentHashMap or copy only the changed part.",
+      "what_the_fix_does": "Flat memory use and cheap updates."
+    },
+    {
+      "number": 36,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Compasses move Minecraft's world spawn (and your respawn point) to the GTA waypoint",
+      "where": [
+        "gta/src/script.cpp:5178"
+      ],
+      "cause": "To make compasses point at the waypoint the script runs `setworldspawn x 64 z`.",
+      "what_happens": "Respawning in Minecraft puts you at the waypoint at y 64 (possibly inside or above the ground).",
+      "how_to_fix": "Use a lodestone-style compass target instead (set the compass item's lodestone_tracker component) or set it only on the held compass.",
+      "what_the_fix_does": "Compasses point to the waypoint without changing where you respawn."
+    },
+    {
+      "number": 37,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "/kill @e with filters kills every GTA person within 250 m",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/HostBridge.java:291-309",
+        "gta/src/script.cpp:5813-5839"
+      ],
+      "cause": "Only `type=` is looked at. `@e[distance=..5]`, `@e[limit=1]`, `@e[type=!cow]` and any zombie type all become 'all' or 'people'. On the GTA side the model filter only accepts names starting with a_c_, u_ or a_m_; any other name would mean 'everyone'.",
+      "what_happens": "A careful /kill of a few nearby mobs wipes out the whole street in GTA.",
+      "how_to_fix": "Pass distance/limit to GTA (and apply them there), map 'type=!x' to 'everything except x', and treat an unknown model as 'none' instead of 'all'.",
+      "what_the_fix_does": "/kill in Minecraft affects the same things in GTA that you selected."
+    },
+    {
+      "number": 38,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Closing the End forces the mob_griefing gamerule on",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/TheEnd.java:334"
+      ],
+      "cause": "start() sets it false, close() always sets it true.",
+      "what_happens": "If you had mob_griefing off, it is turned on after the End closes.",
+      "how_to_fix": "Read and remember the previous value in start() and restore that.",
+      "what_the_fix_does": "Your gamerule stays as you set it."
+    },
+    {
+      "number": 39,
+      "priority": "low",
+      "type": "design",
+      "confidence": "confirmed (read in the code)",
+      "title": "All hostile mobs are deleted on world save; every hostile mob permanently gets a 48-block follow range",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/MobWar.java:346 detach, :92 onEntityLoad"
+      ],
+      "cause": "detach() calls discardFighters (all hostile mobs) on server stop. onEntityLoad raises FOLLOW_RANGE and adds a goal to every hostile mob, even when GTA is not attached, and that is saved.",
+      "what_happens": "Mobs you kept (named, in cages) are gone after restarting; vanilla mobs behave differently in normal play.",
+      "how_to_fix": "Only remove mobs tagged as part of the fight; only modify mobs while Passthrough.active and don't change the saved base value (use a temporary attribute modifier).",
+      "what_the_fix_does": "Your own mobs survive and normal play is unchanged."
+    },
+    {
+      "number": 40,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Any invisible villager counts as a GTA person's proxy",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/MobWar.java:73 isProxy"
+      ],
+      "cause": "isProxy returns true for `isInvisible()` villagers too (needed on the client).",
+      "what_happens": "A villager with an invisibility potion becomes untargetable by your arrows, mobs hunt it, and it's excluded from 'allmobs'.",
+      "how_to_fix": "On the server use only the tag; on the client keep the invisibility check but also require NoAI/silent.",
+      "what_the_fix_does": "Only real proxies are treated as proxies."
+    },
+    {
+      "number": 41,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "/fly state is not saved, and joining a world sets 'flying' even in survival",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/Passthrough.java:240 /fly",
+        "mc/.../client/PassthroughClient.java:250"
+      ],
+      "cause": "flyAllowed is a static that resets on restart, but mayfly given in survival is saved with the player. The join handler sets abilities.flying = true for everyone.",
+      "what_happens": "After a restart you can still fly in Minecraft while GTA thinks /fly is off (no car flight), and survival players start hovering.",
+      "how_to_fix": "Store flyAllowed in the player (a tag) and read it on join; only set flying on join if mayfly.",
+      "what_the_fix_does": "Flying behaves the same after a restart."
+    },
+    {
+      "number": 42,
+      "priority": "low",
+      "type": "design",
+      "confidence": "confirmed (read in the code)",
+      "title": "The mod overwrites your Minecraft options and gamerules every time",
+      "where": [
+        "mc/.../client/PassthroughClient.java:203-222 SETUP, :330 configure"
+      ],
+      "cause": "configure() changes render distance, vsync, fps cap, clouds, view bobbing, FOV effects... and saves them to options.txt (also used without GTA). SETUP re-applies gamerules (spawn_mobs false, keep_inventory true, difficulty normal...) on every join.",
+      "what_happens": "Normal Minecraft play is affected, and gamerules you change are reset on the next start.",
+      "how_to_fix": "Apply the options only while attached (and restore them after), and run SETUP only when the world is created.",
+      "what_the_fix_does": "Your normal Minecraft settings and gamerules stay yours."
+    },
+    {
+      "number": 43,
+      "priority": "low",
+      "type": "design",
+      "confidence": "confirmed (read in the code)",
+      "title": "All toasts are blocked even when GTA is not attached",
+      "where": [
+        "mc/src/client/java/dev/rehan/passthrough/client/mixin/ToastManagerMixin.java:7"
+      ],
+      "cause": "No Passthrough.active check.",
+      "what_happens": "No advancement/recipe/system toasts in normal play.",
+      "how_to_fix": "Add `if (!Passthrough.active) return;`.",
+      "what_the_fix_does": "Toasts only hidden while playing inside GTA."
+    },
+    {
+      "number": 44,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "A broken connection can glue garbage onto the next message",
+      "where": [
+        "gta/src/ws.cpp:214 (partial)"
+      ],
+      "cause": "`partial` (an unfinished fragmented message) is not cleared when the connection drops.",
+      "what_happens": "After a reconnect the first message may be unreadable.",
+      "how_to_fix": "Clear `partial` whenever close() is called / at the start of each connection.",
+      "what_the_fix_does": "Clean reconnects."
+    },
+    {
+      "number": 45,
+      "priority": "low",
+      "type": "race",
+      "confidence": "confirmed (read in the code)",
+      "title": "Small thread races in the compositor and WebSocket code",
+      "where": [
+        "gta/src/compositor.cpp:566-567 set_steve (height/seated written before the lock)",
+        "gta/src/ws.cpp recvAll (m_socket read without the lock)"
+      ],
+      "cause": "Values shared between the game thread and the render/network thread are written without the mutex.",
+      "what_happens": "Very rarely a wrong Steve height/seated flag for one frame.",
+      "how_to_fix": "Move those writes inside the lock; make m_socket atomic.",
+      "what_the_fix_does": "No races."
+    },
+    {
+      "number": 46,
+      "priority": "low",
+      "type": "crash",
+      "confidence": "likely (logic says so, not seen in game)",
+      "title": "The compositor trusts the shared memory layout completely",
+      "where": [
+        "gta/src/compositor.cpp:191 upload, :127 open_mapping"
+      ],
+      "cause": "Width/height/slot are not checked against the stride and the version field is ignored.",
+      "what_happens": "A mismatched Minecraft mod version (or corrupted header) can make GTA read outside the mapping and crash.",
+      "how_to_fix": "Check version == 1 and w*h*4*3 <= g_stride before copying.",
+      "what_the_fix_does": "A wrong version just disables compositing."
+    },
+    {
+      "number": 47,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Timers based on GetTickCount stop working after ~49 days of Windows uptime",
+      "where": [
+        "gta/src/compositor.cpp:131, :298"
+      ],
+      "cause": "GetTickCount wraps at 2^32 ms; `GetTickCount() < next` then stays true.",
+      "what_happens": "On a PC that hasn't rebooted for 49+ days, connecting to Minecraft's frame or reloading the effect may stop working.",
+      "how_to_fix": "Use GetTickCount64 (already used elsewhere in the same file).",
+      "what_the_fix_does": "Works regardless of uptime."
+    },
+    {
+      "number": 48,
+      "priority": "low",
+      "type": "perf",
+      "confidence": "confirmed (read in the code)",
+      "title": "Uniforms are looked up by name about 25 times every frame",
+      "where": [
+        "gta/src/compositor.cpp:321-466 on_begin_effects"
+      ],
+      "cause": "find_uniform_variable does a name search each call.",
+      "what_happens": "A little CPU time every frame.",
+      "how_to_fix": "Cache the handles and refresh them in on_reloaded_effects.",
+      "what_the_fix_does": "Slightly lower frame time."
+    },
+    {
+      "number": 49,
+      "priority": "low",
+      "type": "perf",
+      "confidence": "confirmed (read in the code)",
+      "title": "Shader passes run even when they do nothing",
+      "where": [
+        "gta/shaders/MCPassthrough.fx:497-516"
+      ],
+      "cause": "The Light pass runs when Minecraft isn't active, and the Bright (glow) pass runs although BloomStrength defaults to 0. The re-projection march does ~45 texture reads per pixel (more inside Steve's box).",
+      "what_happens": "Some GPU time lost every frame, more at 4K.",
+      "how_to_fix": "Early-out in PS_Light when !McActive, skip PS_Bright when BloomStrength == 0, and skip the march for pixels where Minecraft's frame is empty in a small neighbourhood.",
+      "what_the_fix_does": "Higher FPS."
+    },
+    {
+      "number": 50,
+      "priority": "low",
+      "type": "perf",
+      "confidence": "confirmed (read in the code)",
+      "title": "Minecraft always reserves ~300 MB of shared memory",
+      "where": [
+        "mc/src/client/java/dev/rehan/passthrough/client/FrameExporter.java:46-49, :129"
+      ],
+      "cause": "The mapping is sized for 3 slots x 3 layers at 3840x2160 regardless of the real window size.",
+      "what_happens": "300 MB of committed page-file memory even at 1080p.",
+      "how_to_fix": "Size it for the current window (recreate under a new generation/name when it grows) or keep 4K but use 2 slots.",
+      "what_the_fix_does": "Less memory use."
+    },
+    {
+      "number": 51,
+      "priority": "low",
+      "type": "perf",
+      "confidence": "confirmed (read in the code)",
+      "title": "Per-frame/per-tick work that could be cheaper",
+      "where": [
+        "gta/src/script.cpp:1933 blast_near (68 natives per frame)",
+        "mc/.../WorldBridge.java:211 reportProjectiles (all entities every tick)",
+        "mc/.../Nether.java:373, TheEnd.java:106/274 (getAllEntities)"
+      ],
+      "cause": "Explosion checks call IsExplosionInSphere for 34 types twice per frame; several server loops walk every entity in the world each tick.",
+      "what_happens": "Small but constant CPU cost; worse in big worlds.",
+      "how_to_fix": "Check explosions every few frames (or one larger radius first); keep a list of tracked projectiles via ENTITY_LOAD instead of scanning all entities.",
+      "what_the_fix_does": "Lower CPU use."
+    },
+    {
+      "number": 52,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Cop target map never forgets dead cops",
+      "where": [
+        "gta/src/script.cpp:1887"
+      ],
+      "cause": "g_copTarget only shrinks in squad_clear.",
+      "what_happens": "Slow memory growth during long mob wars.",
+      "how_to_fix": "Erase entries whose cop no longer exists when re-tasking.",
+      "what_the_fix_does": "No leak."
+    },
+    {
+      "number": 53,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "likely (logic says so, not seen in game)",
+      "title": "Hard crashes into GTA things near your blocks get an extra dent",
+      "where": [
+        "gta/src/script.cpp:3305 crash_tick"
+      ],
+      "cause": "Any sudden loss of 4 m/s with a Minecraft block within 5 m ahead counts as hitting that block.",
+      "what_happens": "Crashing into a GTA wall or car next to your build dents the car extra deep.",
+      "how_to_fix": "Check that the car actually touches the block (distance from the block's face to the car's bounding box < ~0.3 m).",
+      "what_the_fix_does": "Extra dents only from real block crashes."
+    },
+    {
+      "number": 54,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "Passing cars near your blocks become 'mission' cars",
+      "where": [
+        "gta/src/script.cpp:3369-3377 props_tick"
+      ],
+      "cause": "Every car within 8 m of a block prop when it is (re)created is marked as a mission entity, including traffic driving by. Props are recreated as you move around.",
+      "what_happens": "More cars than needed never despawn while you're within 250 m (performance, traffic jams).",
+      "how_to_fix": "Only keep cars that are parked/stopped and actually touching or inside the block's space.",
+      "what_the_fix_does": "Only cars built around are kept."
+    },
+    {
+      "number": 55,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "likely (logic says so, not seen in game)",
+      "title": "Melee near-miss can hit someone behind a thin wall",
+      "where": [
+        "gta/src/script.cpp:2625-2652 (melee near-miss fallback)"
+      ],
+      "cause": "When the probe hits nothing (or a Minecraft prop), the fallback picks the ped nearest the crosshair line with no line-of-sight test.",
+      "what_happens": "Rarely, a punch lands on someone on the other side of a fence/glass.",
+      "how_to_fix": "Run a quick LOS probe from the eye to the chosen ped before hitting.",
+      "what_the_fix_does": "Only visible targets are hit."
+    },
+    {
+      "number": 56,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "confirmed (read in the code)",
+      "title": "A projectile first seen far from you is traced from your chest",
+      "where": [
+        "gta/src/script.cpp:1383-1393 projectiles_message"
+      ],
+      "cause": "New projectiles start their trace at the player's chest; if the first report comes late (after a reconnect, or a projectile that started far away like a dispenser-thrown one owned by you) the first segment spans a long distance.",
+      "what_happens": "Rare false hits (glass broken, a ped hit) along a line that the projectile never flew.",
+      "how_to_fix": "Only use the chest start when the first position is within ~3 m of the player; otherwise start at the first reported position.",
+      "what_the_fix_does": "No phantom hits."
+    },
+    {
+      "number": 57,
+      "priority": "low",
+      "type": "shader",
+      "confidence": "confirmed (read in the code)",
+      "title": "Minecraft things closer than 0.2 m or farther than 400 m are never drawn",
+      "where": [
+        "gta/shaders/MCPassthrough.fx:226 zNear, :325 zFar cap"
+      ],
+      "cause": "The re-projection march starts at 0.2 m and is capped at 400 m.",
+      "what_happens": "Blocks right against the camera, or very large builds far away, are cut off.",
+      "how_to_fix": "Start at ~0.05 m and raise the cap (or use a separate fast path for far pixels with no re-projection).",
+      "what_the_fix_does": "Everything Minecraft draws can show."
+    },
+    {
+      "number": 58,
+      "priority": "low",
+      "type": "shader",
+      "confidence": "confirmed (read in the code)",
+      "title": "In a car, anything within 1.4 m in front of Steve doesn't hide him",
+      "where": [
+        "gta/shaders/MCPassthrough.fx:387-388 (glass rule)"
+      ],
+      "cause": "The seated rule lets Steve's upper body show through whatever GTA has within 1.4 m in front of him (meant for windows and pillars).",
+      "what_happens": "A wall or a person right next to the car can't cover Steve.",
+      "how_to_fix": "Use the glass probe result for car windows too (steve_region already finds glass), keep the 1.4 m rule only for the car's own surfaces (compare against the car's bounding box).",
+      "what_the_fix_does": "Steve is hidden by things outside the car correctly."
+    },
+    {
+      "number": 59,
+      "priority": "low",
+      "type": "design",
+      "confidence": "confirmed (read in the code)",
+      "title": "/clearall deletes every non-barrier block in a 272x272 area at every height",
+      "where": [
+        "mc/src/main/java/dev/rehan/passthrough/HostBridge.java:225 clearAll"
+      ],
+      "cause": "It's meant for the void 'passthrough' world, but there's no check or confirmation.",
+      "what_happens": "Run in a normal world it erases the terrain down to the void.",
+      "how_to_fix": "Ask for confirmation (/clearall confirm) and only clear blocks above/around the host ground, or only blocks placed by the player (track them).",
+      "what_the_fix_does": "No accidental world wipes."
+    },
+    {
+      "number": 60,
+      "priority": "low",
+      "type": "design",
+      "confidence": "confirmed (read in the code)",
+      "title": "With Minecraft items in hand, GTA weapons are forced away every frame",
+      "where": [
+        "gta/src/script.cpp:6538-6547"
+      ],
+      "cause": "Whenever a GTA weapon is selected while in Minecraft-hands mode it is swapped back to unarmed.",
+      "what_happens": "Missions that make you draw a weapon (tutorials, scripted aim) can get stuck until you press Tab.",
+      "how_to_fix": "Don't force unarmed during missions (when GET_MISSION_FLAG is set) or show a hint to press Tab.",
+      "what_the_fix_does": "Missions that need a weapon work."
+    },
+    {
+      "number": 61,
+      "priority": "low",
+      "type": "bug",
+      "confidence": "likely (logic says so, not seen in game)",
+      "title": "'T' and 'I' open Minecraft chat/inventory even when typing in GTA's own text boxes",
+      "where": [
+        "gta/src/script.cpp:6663-6664 on_keyboard"
+      ],
+      "cause": "The keyboard handler doesn't check whether GTA's on-screen keyboard or phone is open.",
+      "what_happens": "Typing a T or I in GTA's text input opens Minecraft's chat/inventory.",
+      "how_to_fix": "Ignore those keys while UPDATE_ONSCREEN_KEYBOARD() == 0 (keyboard open) or the phone is out.",
+      "what_the_fix_does": "No accidental Minecraft screens."
+    },
+    {
+      "number": 62,
+      "priority": "info",
+      "type": "leftover",
+      "confidence": "confirmed (read in the code)",
+      "title": "Video/director tooling still built into the release",
+      "where": [
+        "gta/src/script.cpp:2808-3092 handle_director (ops: probe, dims, tcmod, postfx, mobinfo, meleefit, gunfit, poselag, fx, armdrive, flylook, blockprops, hell, army, police, cops, gun...)",
+        "gta/src/script.cpp:40-47, 206 (kGuns, g_police, g_statHits/g_statDmg/g_statDoubles)",
+        "video/ and host/ folders"
+      ],
+      "cause": "These were used to record the demo videos and tune values.",
+      "what_happens": "Extra code and attack surface (combined with the WebSocket issue, a web page could trigger them).",
+      "how_to_fix": "Move them behind a debug flag (an ini setting) or remove them; move video/ and host/ into a tools/ folder.",
+      "what_the_fix_does": "Smaller, simpler plugin; fewer ways for something to go wrong."
+    },
+    {
+      "number": 63,
+      "priority": "info",
+      "type": "unused",
+      "confidence": "confirmed (read in the code)",
+      "title": "Sneak flag is always false: the crouch code on the Minecraft side never runs",
+      "where": [
+        "gta/src/script.cpp:6507 (\"sn\":false)",
+        "mc/.../HostState.java:77",
+        "mc/.../mixin/AvatarRendererMixin.java:38"
+      ],
+      "cause": "GTA always sends \"sn\":false.",
+      "what_happens": "Dead code; Steve never crouches when GTA's player is in stealth.",
+      "how_to_fix": "Send GET_PED_STEALTH_MOVEMENT(ped), or delete the field and the crouch code.",
+      "what_the_fix_does": "Either a working crouch or less code."
+    },
+    {
+      "number": 64,
+      "priority": "info",
+      "type": "unused",
+      "confidence": "confirmed (read in the code)",
+      "title": "First-person head hiding is dead code",
+      "where": [
+        "mc/.../client/SteveRig.java:24-26, :93",
+        "mc/.../mixin/PlayerModelMixin.java:11"
+      ],
+      "cause": "setLocal is always called with firstPerson = false (Steve isn't drawn in first person any more).",
+      "what_happens": "Unused fields and checks.",
+      "how_to_fix": "Remove localFirstPerson/firstPerson() and the head.visible line.",
+      "what_the_fix_does": "Cleaner code."
+    },
+    {
+      "number": 65,
+      "priority": "info",
+      "type": "leftover",
+      "confidence": "confirmed (read in the code)",
+      "title": "Unused variables and stray comments",
+      "where": [
+        "gta/src/script.cpp:4981/5009 (`mine` + `(void)mine`)",
+        "gta/src/script.cpp:4626/4641 (`hit` + `(void)hit`)",
+        "mc/.../WorldBridge.java:234, :288-291, :560 (orphaned javadoc comments for removed methods)",
+        "mc/.../Nether.java:470 (both branches of the ternary are the same)",
+        "gta/src/script.cpp:946-948 (potion comment above the wrong declaration)",
+        "gta/src/script.cpp:1090-1094 (projectile comment above StuckArrow)",
+        "gta/src/script.cpp:4507-4511 (walk_tick comment above pickups_tick)"
+      ],
+      "cause": "Leftovers from earlier edits.",
+      "what_happens": "Confusing when reading the code.",
+      "how_to_fix": "Delete the unused variables and move or remove the misplaced comments.",
+      "what_the_fix_does": "Cleaner code."
+    },
+    {
+      "number": 66,
+      "priority": "info",
+      "type": "leftover",
+      "confidence": "confirmed (read in the code)",
+      "title": "Built jar committed to git",
+      "where": [
+        "dist/passthrough-0.1.0.jar"
+      ],
+      "cause": "The compiled mod is checked into the repository.",
+      "what_happens": "Every rebuild adds ~280 KB to the history; easy to forget to update.",
+      "how_to_fix": "Publish it as a GitHub release asset instead (or keep it but update it in the same commit as the code, as now).",
+      "what_the_fix_does": "Smaller repo, always-matching downloads."
+    }
+  ]
+}
