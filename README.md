@@ -254,6 +254,7 @@ haze, glow, depth bias. `install.sh` resets them to the defaults.
 | walking feels wrong somewhere | F6 switches to GTA's own walking. It also switches by itself if GTA's floor can't be found |
 | the mouse turns too fast or slow | change `LookSensitivity` in `MCPassthrough.ini`, then F8 |
 | a mission needs GTA's guns | Tab switches Steve's hands to GTA's weapons |
+| something doesn't work (leads, stops while walking, ...) | send `MCPassthrough.log` from the GTA folder: it lists every lead click and what it hit, each time Minecraft's player was put back (and why), ground re-levels and `/kill` results |
 
 ---
 
@@ -276,7 +277,8 @@ pitch = −pitch. The script picks yOffset so the ground where the player stands
   control. Minecraft renders from that camera with no sky, fog or clouds.
 - **Ground.** The script probes GTA's ground in the columns around the player and sends them as `ground`; the mod fills
   them with invisible barrier blocks, raised over GTA's walls and fences so mobs bump into them. GTA's water goes as
-  `gwater`: Minecraft treats it as water nobody sees (`HostWater`, via `Level.getFluidState`).
+  `gwater`: Minecraft treats it as water nobody sees (`HostWater`, via `Level.getFluidState`; Minecraft only looks
+  for water in chunk sections that hold some, so `EntityFluidMixin` lets it look where GTA has water).
 - **Minecraft movement.** GTA's player is frozen and follows Minecraft's. GTA's floors, walls (24 rays at three
   heights, joined) and ceilings around the player go to Minecraft as collision boxes (`hc`). Fast moves (gliding) are
   checked against GTA's world along their whole path.
@@ -330,7 +332,8 @@ None of these need GTA:
 curl -sLO https://raw.githubusercontent.com/alloc8or/gta5-nativedb-data/master/natives.json
 python3 gta/tests/check_natives.py natives.json
 
-# the GTA simulator (the script's movement, input, rig, minimap mask, arrows, character switches, leads, boats)
+# the GTA simulator (the script's movement, input, rig, minimap mask, arrows, character switches, leads, boats,
+# pickups and re-levelling never stopping the player, punched signs flung, /kill on people in cars)
 python3 tests/sim/gen_hashes.py
 g++ -std=c++20 -w -Itests/sim/inc -Igta/third_party/shv "-D__declspec(x)=" -DNOMINMAX tests/sim/sim.cpp -o sim && ./sim
 
@@ -339,6 +342,7 @@ python3 tests/scratchpad_test_host.py   # screens, portals, melee, projectiles
 python3 tests/walktest.py               # Minecraft movement against GTA's collision, pearls, blocks on walls, water
 python3 tests/features_test.py          # animals, commands, mobs, fires, spectator, HUD health, cutscene input
 python3 tests/leads_test.py             # leads on GTA's things (held, tied, cut), Minecraft's mobs tied there, boat seats
+python3 tests/water_test.py             # in GTA's water: in water (swimming), and a riptide trident launches there
 ```
 
 The GTA side is also compile-checked with MinGW (`x86_64-w64-mingw32-g++ -fsyntax-only`), and the effect with

@@ -398,6 +398,9 @@ namespace natives
 	inline BOOL IsEntityPlayingAnim(Entity e, const char *d, const char *a) { return invoke<BOOL>(0x1F0B79228E461EC9, e, d, a, 3); }
 	inline void ClearPedTasksImmediately(Ped p) { invoke<Void>(0xAAA34F8A7CB32098, p); }
 	inline BOOL IsThisModelABicycle(Hash m) { return invoke<BOOL>(0xBF94DD42F63BDED2, m); }
+	// Street furniture knocked loose; people killed in their seats.
+	inline void ActivatePhysics(Entity e) { invoke<Void>(0x710311ADF0E20730, e); }
+	inline void ExplodePedHead(Ped p, Hash weapon) { invoke<Void>(0x2D05CED3A38D0F3A, p, weapon); }
 
 	inline void Notify(const char *text)
 	{

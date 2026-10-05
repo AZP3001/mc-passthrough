@@ -97,7 +97,7 @@ struct SimNpc
 {
 	float x = 0, y = 0, z = 11.4f, vx = 0, vy = 0, vz = 0;
 	Hash model = 0;
-	bool human = true, frozen = false;
+	bool human = true, frozen = false, inCar = false;
 };
 std::map<int, SimNpc> g_npcs;
 struct SimCar
@@ -105,6 +105,10 @@ struct SimCar
 	bool on = false;
 	float x = 0, y = 0, z = 11, vx = 0, vy = 0;
 } g_car;
+// GTA's objects (worldGetAllObjects lists them; a street has hundreds), where they are, and which are pickups
+std::vector<int> g_objects;
+std::map<int, std::array<float, 3>> g_objPos;
+std::set<int> g_pickups;
 std::set<int> g_pressed, g_justPressed;
 std::vector<std::string> g_calls; // natives of interest called
 std::vector<std::string> g_out;   // sent to Minecraft
@@ -264,6 +268,24 @@ PUINT64 nativeCall()
 		g_calls.push_back("Walk:" + std::to_string(I(0)));
 	else if (npc != g_npcs.end() && h == H_TaskPlayAnimLoop)
 		g_calls.push_back("Sit:" + std::to_string(I(0)));
+	else if (npc != g_npcs.end() && h == H_IsPedInAnyVehicle)
+		retI(npc->second.inCar);
+	else if (npc != g_npcs.end() && h == H_ExplodePedHead)
+		g_calls.push_back("Headshot:" + std::to_string(I(0)));
+	else if (npc != g_npcs.end() && h == H_ClearPedTasksImmediately)
+	{
+		npc->second.inCar = false;
+		g_calls.push_back("Out:" + std::to_string(I(0)));
+	}
+	else if (g_objPos.count(g_argc > 0 ? I(0) : -1) && h == H_GetEntityCoords)
+	{
+		const auto &o = g_objPos[I(0)];
+		retV(o[0], o[1], o[2]);
+	}
+	else if (h == H_IsObjectAPickup)
+		retI(g_pickups.count(I(0)) ? 1 : 0);
+	else if (npc == g_npcs.end() && h == H_SetEntityVelocity && I(0) != 1)
+		g_calls.push_back("Velocity:" + std::to_string(I(0)));
 	else if (h == H_GetModelDimensions)
 	{
 		Vector3 *mn = P<Vector3>(1), *mx = P<Vector3>(2);
@@ -440,7 +462,14 @@ int worldGetAllPeds(int *arr, int max)
 			arr[n++] = id;
 	return n;
 }
-int worldGetAllObjects(int *arr, int) { return 0; }
+int worldGetAllObjects(int *arr, int max)
+{
+	int n = 0;
+	for (const int o : g_objects)
+		if (n < max)
+			arr[n++] = o;
+	return n;
+}
 
 // ---- the link ----
 void WsClient::start(const char *, int)
@@ -1019,6 +1048,73 @@ int main()
 	}
 	g_npcs.clear();
 	g_world.erase(std::remove_if(g_world.begin(), g_world.end(), [](const Box &b) { return b.entity == 5; }), g_world.end());
+
+	// ---- a sign punched: flung, with hundreds of other things about (it isn't among the first listed) ----
+	look(0.0f);
+	g_camPitch = g_walkCam.pitch = 0.0f;
+	for (int i = 0; i < 400; ++i)
+		g_objects.push_back(1000 + i);
+	g_objects.push_back(301);
+	g_types[301] = 3;
+	g_objPos[301] = {g_walk.x, g_walk.y + 2.0f, g_walk.z + 1.0f};
+	g_world.push_back({g_walk.x - 0.3f, g_walk.y + 1.8f, g_walk.z, g_walk.x + 0.3f, g_walk.y + 2.2f, g_walk.z + 2.5f, 301});
+	g_calls.clear();
+	g_in.push_back("{\"t\":\"melee\",\"k\":\"fist\",\"s\":1.00,\"kb\":0,\"sh\":0,\"fa\":0,\"lo\":0}");
+	frame();
+	check(std::find(g_calls.begin(), g_calls.end(), "Velocity:301") != g_calls.end(), "a sign the crosshair is on is knocked flying (among 400 other things)");
+	check(std::count_if(g_calls.begin(), g_calls.end(), [](const std::string &c) { return c.rfind("Velocity:", 0) == 0; }) == 1,
+		"and nothing else (a swing hits what it's on)");
+	g_world.pop_back();
+	g_objects.clear();
+
+	// ---- a pickup in reach: GTA's player is put on it to collect it, Minecraft's player isn't moved ----
+	{
+		g_objects = {401};
+		g_types[401] = 3;
+		g_pickups = {401};
+		g_objPos[401] = {g_walk.x + 1.4f, g_walk.y, g_walk.z + 0.1f};
+		int psets = 0;
+		float furthest = 0.0f;
+		for (int i = 0; i < 40; ++i)
+		{
+			frame();
+			psets += count_out("\"t\":\"pset\"");
+			furthest = std::max(furthest, std::fabs(g_sped.x - g_walk.x));
+		}
+		check(furthest > 1.0f, "GTA's player is put on a pickup in reach (GTA collects it)");
+		check(psets == 0, "and Minecraft's player stays where it is (no correction)");
+		g_objects.clear();
+		g_pickups.clear();
+	}
+
+	// ---- walking onto ground that's off a whole block: no relevel under way ----
+	{
+		g_world.push_back({g_walk.x - 3.0f, g_walk.y + 1.0f, 9.4f, g_walk.x + 3.0f, g_walk.y + 30.0f, 10.73f, 0});
+		look(0.0f);
+		g_pressed = {32};
+		int clears = 0;
+		for (int i = 0; i < 300; ++i)
+		{
+			frame();
+			clears += count_out("\"t\":\"clear\"");
+		}
+		g_pressed.clear();
+		check(clears == 0, "walking over uneven ground: Minecraft's ground isn't rebuilt under way");
+		g_world.pop_back();
+	}
+
+	// ---- /kill @e: someone sitting in a car ----
+	g_npcs[6] = {g_walk.x + 5.0f, g_walk.y, 11.4f};
+	g_npcs[6].inCar = true;
+	g_types[6] = 1;
+	g_calls.clear();
+	g_in.push_back("{\"t\":\"gtacmd\",\"c\":\"kill\",\"what\":\"all\"}");
+	frame();
+	check(std::find(g_calls.begin(), g_calls.end(), "Headshot:6") != g_calls.end(), "/kill @e: someone in a car is killed in the seat");
+	for (int i = 0; i < 40; ++i)
+		frame();
+	check(std::find(g_calls.begin(), g_calls.end(), "Out:6") != g_calls.end(), "and if still alive, taken out of it and killed");
+	g_npcs.clear();
 	std::printf("%s\n", fails == 0 ? "ALL PASSED" : "SOME FAILED");
 	return fails != 0;
 }

@@ -80,5 +80,10 @@ inline DWORD GetPrivateProfileStringA(const char *, const char *, const char *de
 	return DWORD(strlen(out));
 }
 inline UINT GetPrivateProfileIntA(const char *, const char *, int def, const char *) { return UINT(def); }
+inline int fopen_s(FILE **f, const char *path, const char *mode)
+{
+	*f = fopen(path, mode);
+	return *f != nullptr ? 0 : 1;
+}
 int sim_sscanf_s(const char *str, const char *fmt, ...);
 #define sscanf_s sim_sscanf_s

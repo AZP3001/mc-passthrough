@@ -27,6 +27,9 @@ import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.entity.Leashable;
 import net.minecraft.world.item.Items;
 import dev.rehan.passthrough.Leads;
+import dev.rehan.passthrough.MobWar;
+import net.minecraft.world.entity.Shearable;
+import net.minecraft.world.entity.decoration.LeashFenceKnotEntity;
 import net.minecraft.world.phys.HitResult;
 import org.lwjgl.sdl.SDLVideo;
 
@@ -222,9 +225,18 @@ final class ClientInput {
 	private static void leashUse(final Minecraft minecraft, final LocalPlayer player) {
 		ItemStack held = player.getMainHandItem();
 		String item = held.is(Items.LEAD) ? "lead" : held.is(Items.SHEARS) ? "shears" : null;
-		if (item == null || HostState.frame() == null
-			|| minecraft.hitResult instanceof EntityHitResult on && !Leads.isProxy(on.getEntity())) {
+		if (item == null || HostState.frame() == null) {
 			return;
+		}
+
+		// (only Minecraft's own mobs, knots and sheep are Minecraft's to leash, untie or shear: anything else the crosshair
+		// is on, an invisible stand-in of the host's included, is the host's)
+		if (minecraft.hitResult instanceof EntityHitResult on) {
+			net.minecraft.world.entity.Entity e = on.getEntity();
+			if (!Leads.isProxy(e) && !MobWar.isProxy(e) && (e instanceof Leashable || e instanceof LeashFenceKnotEntity
+				|| item.equals("shears") && e instanceof Shearable)) {
+				return;
+			}
 		}
 
 		int mobs = 0;

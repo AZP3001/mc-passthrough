@@ -3,6 +3,9 @@ package dev.rehan.passthrough;
 import it.unimi.dsi.fastutil.longs.Long2LongMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.level.material.Fluids;
 
@@ -41,6 +44,39 @@ public final class HostWater {
 
 	public static void clear() {
 		columns = new Long2LongOpenHashMap();
+	}
+
+	/**
+	 * Whether any of the host's water is in the cells x0..x1, y0..y1, z0..z1, and their chunks are loaded (Minecraft's own
+	 * check for fluid in a box only knows its chunks' own fluid).
+	 */
+	public static boolean any(final Level level, final int x0, final int y0, final int z0, final int x1, final int y1, final int z1) {
+		Long2LongMap map = columns;
+		if (map.isEmpty()) {
+			return false;
+		}
+
+		boolean found = false;
+		for (int x = x0; x <= x1 && !found; x++) {
+			for (int z = z0; z <= z1 && !found; z++) {
+				long v = map.getOrDefault(key(x, z), Long.MIN_VALUE);
+				found = v != Long.MIN_VALUE && (int) (v >> 32) <= y1 && (int) v >= y0 * 256;
+			}
+		}
+
+		if (!found) {
+			return false;
+		}
+
+		for (int cx = SectionPos.blockToSectionCoord(x0); cx <= SectionPos.blockToSectionCoord(x1); cx++) {
+			for (int cz = SectionPos.blockToSectionCoord(z0); cz <= SectionPos.blockToSectionCoord(z1); cz++) {
+				if (level.getChunk(cx, cz, ChunkStatus.FULL, false) == null) {
+					return false;
+				}
+			}
+		}
+
+		return true;
 	}
 
 	/** The host's water in this cell (a cell is water when the surface is over its middle), or null. */
