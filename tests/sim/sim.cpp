@@ -270,8 +270,6 @@ PUINT64 nativeCall()
 		g_calls.push_back("Sit:" + std::to_string(I(0)));
 	else if (npc != g_npcs.end() && h == H_IsPedInAnyVehicle)
 		retI(npc->second.inCar);
-	else if (npc != g_npcs.end() && h == H_ExplodePedHead)
-		g_calls.push_back("Headshot:" + std::to_string(I(0)));
 	else if (npc != g_npcs.end() && h == H_ClearPedTasksImmediately)
 	{
 		npc->second.inCar = false;
@@ -1061,9 +1059,10 @@ int main()
 	g_calls.clear();
 	g_in.push_back("{\"t\":\"melee\",\"k\":\"fist\",\"s\":1.00,\"kb\":0,\"sh\":0,\"fa\":0,\"lo\":0}");
 	frame();
-	check(std::find(g_calls.begin(), g_calls.end(), "Velocity:301") != g_calls.end(), "a sign the crosshair is on is knocked flying (among 400 other things)");
-	check(std::count_if(g_calls.begin(), g_calls.end(), [](const std::string &c) { return c.rfind("Velocity:", 0) == 0; }) == 1,
+	check(std::find(g_calls.begin(), g_calls.end(), "ApplyForce:301") != g_calls.end(), "a sign the crosshair is on is knocked flying (among 400 other things)");
+	check(std::count_if(g_calls.begin(), g_calls.end(), [](const std::string &c) { return c.rfind("ApplyForce:", 0) == 0; }) == 1,
 		"and nothing else (a swing hits what it's on)");
+	check(std::find(g_calls.begin(), g_calls.end(), "Velocity:301") == g_calls.end(), "pushed, never its velocity set (that crashed GTA on map objects)");
 	g_world.pop_back();
 	g_objects.clear();
 
@@ -1110,10 +1109,9 @@ int main()
 	g_calls.clear();
 	g_in.push_back("{\"t\":\"gtacmd\",\"c\":\"kill\",\"what\":\"all\"}");
 	frame();
-	check(std::find(g_calls.begin(), g_calls.end(), "Headshot:6") != g_calls.end(), "/kill @e: someone in a car is killed in the seat");
 	for (int i = 0; i < 40; ++i)
 		frame();
-	check(std::find(g_calls.begin(), g_calls.end(), "Out:6") != g_calls.end(), "and if still alive, taken out of it and killed");
+	check(std::find(g_calls.begin(), g_calls.end(), "Out:6") != g_calls.end(), "/kill @e: someone in a car still alive shortly after is taken out of it and killed");
 	g_npcs.clear();
 	std::printf("%s\n", fails == 0 ? "ALL PASSED" : "SOME FAILED");
 	return fails != 0;

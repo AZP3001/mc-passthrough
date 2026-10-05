@@ -80,6 +80,7 @@ inline DWORD GetPrivateProfileStringA(const char *, const char *, const char *de
 	return DWORD(strlen(out));
 }
 inline UINT GetPrivateProfileIntA(const char *, const char *, int def, const char *) { return UINT(def); }
+inline HMODULE GetModuleHandleA(const char *) { return nullptr; }
 inline int fopen_s(FILE **f, const char *path, const char *mode)
 {
 	*f = fopen(path, mode);

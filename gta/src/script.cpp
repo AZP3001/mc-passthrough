@@ -323,6 +323,10 @@ namespace
 		std::fflush(file);
 	}
 
+	// What tick() is doing now: named in MCPassthrough.log if something fails inside GTA meanwhile (script_main)
+	const char *g_doing = "starting";
+	char g_doingMessage[64] = "";
+
 	WsClient g_ws;
 	bool g_started = false;
 	bool g_enabled = true;
@@ -2792,16 +2796,16 @@ namespace
 			// street furniture (lamp posts, signs, bins, hydrants, benches) and loose things lying about (a car's bumper or
 			// door): knocked loose and launched along the look, light things further, knockback much further
 			auto fling = [&](Object ob) {
+				if (!natives::DoesEntityExist(ob) || natives::GetEntityType(ob) != 3)
+					return;
 				natives::FreezeEntityPosition(ob, FALSE);
 				natives::SetEntityDynamic(ob, TRUE);
-				natives::ActivatePhysics(ob);
 				const float light = std::clamp(std::sqrt(60.0f / std::max(1.0f, entity_mass(ob))), 0.35f, 1.5f);
 				const float kb = 1.0f + float(std::min(en.knockback, 50));
 				const float speed = std::min(60.0f, (3.0f + 7.0f * s) * light * kb * (smash ? 1.6f : 1.0f) * (style->windows ? 1.3f : 1.0f));
 				const float up = (1.5f + 2.5f * s) * std::min(light, 1.0f) * (smash ? 1.6f : 1.0f);
-				// a blow first (it tears one fixed in the ground loose), then just this speed
+				// (a blow only: ACTIVATE_PHYSICS and SET_ENTITY_VELOCITY on some of GTA's map objects crashed the game)
 				natives::ApplyForceToEntity(ob, ux * speed, uy * speed, up + uz * speed);
-				natives::SetEntityVelocity(ob, ux * speed, uy * speed, up + uz * speed);
 			};
 			// the one the crosshair is on, itself (looked for among the objects around, it often wasn't listed: a street
 			// has hundreds, and Minecraft's placed blocks are some of them too)
@@ -2810,8 +2814,8 @@ namespace
 			if (smash)
 			{
 				// the mace's smash: everything round about
-				static int objs[2048];
-				const int n = worldGetAllObjects(objs, 2048);
+				int objs[256];
+				const int n = worldGetAllObjects(objs, 256); // (more gives that many of GTA's objects script handles: its pool of those runs out)
 				for (int i = 0; i < n; ++i)
 				{
 					const Object ob = objs[i];
@@ -3502,6 +3506,8 @@ namespace
 	void handle_event(const std::string &message)
 	{
 		const std::string type = json_str(message, "t");
+		snprintf(g_doingMessage, sizeof(g_doingMessage), "Minecraft's \"%s\"", type.c_str());
+		g_doing = g_doingMessage;
 		if (type == "gta")
 		{
 			handle_director(message);
@@ -5984,7 +5990,10 @@ namespace
 		// a car, a thing, someone lying down: what took it further is gone, and it's drawn back a little
 		const Vector3 v = natives::GetEntityVelocity(body);
 		const float out = std::max(0.0f, v.x * ux + v.y * uy + v.z * uz) + std::min(over * 3.0f, 6.0f);
-		natives::SetEntityVelocity(body, v.x - ux * out, v.y - uy * out, v.z - uz * out);
+		if (natives::GetEntityType(body) == 3)
+			natives::ApplyForceToEntity(body, -ux * out, -uy * out, -uz * out); // (a thing: pushed, never its velocity set)
+		else
+			natives::SetEntityVelocity(body, v.x - ux * out, v.y - uy * out, v.z - uz * out);
 	}
 
 	/// The end `body` (its lead at `p`) pulled along toward `c` by something strong enough, moving off at `speed`.
@@ -6022,12 +6031,16 @@ namespace
 		{
 			natives::FreezeEntityPosition(body, FALSE); // (signs, bins, doors: torn loose)
 			natives::SetEntityDynamic(body, TRUE);
-			natives::ActivatePhysics(body);
 		}
 		const Vector3 v = natives::GetEntityVelocity(body);
 		const float along = v.x * ux + v.y * uy + v.z * uz, want = std::min(15.0f, speed + over * 2.5f);
-		if (along < want)
-			natives::SetEntityVelocity(body, v.x + ux * (want - along), v.y + uy * (want - along), v.z + uz * (want - along) + (type == 1 ? 0.3f : 0.0f));
+		if (along >= want)
+			return;
+		const float dv = want - along;
+		if (type == 3)
+			natives::ApplyForceToEntity(body, ux * dv, uy * dv, uz * dv); // (a thing: pushed, never its velocity set)
+		else
+			natives::SetEntityVelocity(body, v.x + ux * dv, v.y + uy * dv, v.z + uz * dv + (type == 1 ? 0.3f : 0.0f));
 	}
 
 	/// A taut lead: the end moving off (or, both still, the stronger) pulls; it moves the other end along if it's strong
@@ -6570,17 +6583,14 @@ namespace
 	};
 	std::vector<KillCheck> g_killChecks;
 
-	/// Killed outright (Minecraft's /kill). Damage alone leaves GTA's people sitting in their cars alive: there, a
-	/// headshot, and another look shortly after (kill_checks_tick).
+	/// Killed outright (Minecraft's /kill). Damage alone can leave GTA's people sitting in their cars alive: they're looked
+	/// at again shortly after (kill_checks_tick).
 	void kill_ped(Ped q, int now)
 	{
 		natives::ApplyDamageToPed(q, 100000);
 		natives::SetEntityHealth(q, 0);
 		if (natives::IsPedInAnyVehicle(q, FALSE))
-		{
-			natives::ExplodePedHead(q, kPistol);
-			g_killChecks.push_back({q, now + 400});
-		}
+			g_killChecks.push_back({q, now + 300});
 	}
 
 	void kill_checks_tick(int now)
@@ -7246,6 +7256,7 @@ namespace
 		float waterTop = 0.0f;
 		const bool swimming = g_walk.on && natives::GetWaterHeight(g_walk.x, g_walk.y, g_walk.z + 2.0f, &waterTop) && waterTop > g_walk.z + 0.3f;
 		const bool flying = g_mcFlying || g_flyAllowed || g_carFly.on || swimming; // (Space is up then, swimming too: no climbing)
+		g_doing = "Minecraft movement";
 		if (g_walk.on && !(!screen && !g_mcSpectator && !flying && (walk_climb(ped) || walk_ladder(ped))))
 			input = walk_tick(ped, screen);
 		// a flying car (in the driver's seat, Space twice)
@@ -7255,11 +7266,15 @@ namespace
 			if (g_carFly.on)
 				input = carInput;
 		}
+		g_doing = "the rest of the frame";
 		stamina_tick(ped, input);
 		thieves_tick(ped);
 		bow_tick(ped);
+		g_doing = "leads";
 		leash_tick(ped);
+		g_doing = "boats";
 		boats_tick(ped);
+		g_doing = "the rest of the frame";
 		cheats_tick(ped);
 		kill_checks_tick(natives::GetGameTimer());
 		arrows_tick();
@@ -7539,6 +7554,41 @@ namespace
 			handle_event(message);
 	}
 
+#ifdef _MSC_VER
+	DWORD g_crashCode = 0;
+	void *g_crashAt = nullptr;
+
+	int crash_filter(EXCEPTION_POINTERS *e)
+	{
+		g_crashCode = e->ExceptionRecord->ExceptionCode;
+		g_crashAt = e->ExceptionRecord->ExceptionAddress;
+		return EXCEPTION_EXECUTE_HANDLER;
+	}
+
+	/// A frame, with a failure inside GTA (a native given an entity in a state it didn't expect) caught: the frame is
+	/// dropped and the plugin carries on, rather than ScriptHookV stopping it for good with an error box.
+	bool guarded_tick()
+	{
+		__try
+		{
+			tick();
+			return true;
+		}
+		__except (crash_filter(GetExceptionInformation()))
+		{
+			return false;
+		}
+	}
+#else
+	DWORD g_crashCode = 0;
+	void *g_crashAt = nullptr;
+	bool guarded_tick()
+	{
+		tick();
+		return true;
+	}
+#endif
+
 	void script_main()
 	{
 		if (!g_started)
@@ -7547,10 +7597,27 @@ namespace
 			load_settings();
 			g_ws.start("127.0.0.1", kPort);
 		}
+		int crashes = 0, notedAt = -100000;
 		while (true)
 		{
 			compositor::try_register(g_module);
-			tick();
+			g_doing = "the frame";
+			if (!guarded_tick())
+			{
+				// (logged with where in GTA it failed, and what the plugin was doing; told on screen now and then)
+				const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr)), at = reinterpret_cast<uintptr_t>(g_crashAt);
+				if (++crashes <= 50)
+					logf("ERROR %08X at GTA5.exe+%llX while doing %s: that frame was skipped", unsigned(g_crashCode),
+						(unsigned long long)(at - base), g_doing);
+				const int now = natives::GetGameTimer();
+				if (now - notedAt > 10000)
+				{
+					notedAt = now;
+					char note[160];
+					snprintf(note, sizeof(note), "~r~Minecraft passthrough~s~: GTA failed during %s (skipped; see MCPassthrough.log)", g_doing);
+					natives::Notify(note);
+				}
+			}
 			WAIT(0);
 		}
 	}
