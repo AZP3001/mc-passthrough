@@ -1,5 +1,6 @@
 package dev.rehan.passthrough.mixin;
 
+import dev.rehan.passthrough.Leads;
 import dev.rehan.passthrough.MobWar;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.damagesource.DamageSource;
@@ -27,14 +28,14 @@ abstract class ProxyMixin {
 
 	@Inject(method = "isPushable()Z", at = @At("HEAD"), cancellable = true)
 	private void passthrough$proxyNotPushable(final CallbackInfoReturnable<Boolean> cir) {
-		if (MobWar.isProxy((LivingEntity) (Object) this)) {
+		if (MobWar.isProxy((LivingEntity) (Object) this) || Leads.isProxy((LivingEntity) (Object) this)) {
 			cir.setReturnValue(false);
 		}
 	}
 
 	@Inject(method = "pushEntities()V", at = @At("HEAD"), cancellable = true)
 	private void passthrough$proxyNoPush(final CallbackInfo ci) {
-		if (MobWar.isProxy((LivingEntity) (Object) this)) {
+		if (MobWar.isProxy((LivingEntity) (Object) this) || Leads.isProxy((LivingEntity) (Object) this)) {
 			ci.cancel();
 		}
 	}
@@ -42,8 +43,9 @@ abstract class ProxyMixin {
 	@Inject(method = "isPickable()Z", at = @At("HEAD"), cancellable = true)
 	private void passthrough$proxyNotPickable(final CallbackInfoReturnable<Boolean> cir) {
 		LivingEntity self = (LivingEntity) (Object) this;
-		// client only: on the server this is also what lets projectiles hit, and mobs' arrows should hit proxies
-		if (self.level().isClientSide() && MobWar.isProxy(self)) {
+		// (the host people's: client only, on the server this is also what lets projectiles hit, and mobs' arrows should hit them;
+		// the ends of the host's leads and seats in boats: never)
+		if (self.level().isClientSide() && MobWar.isProxy(self) || Leads.isProxy(self)) {
 			cir.setReturnValue(false);
 		}
 	}

@@ -84,6 +84,7 @@ public class Passthrough implements ModInitializer {
 			Nether.detach(server);
 			TheEnd.detach(server);
 			MobWar.detach(server);
+			Leads.detach(server);
 			WorldBridge.removeGround(server); // the host's ground isn't saved with the world either
 			WorldBridge.detach();
 		});
@@ -269,6 +270,7 @@ public class Passthrough implements ModInitializer {
 		});
 		ServerEntityEvents.ENTITY_LOAD.register(MobWar::onEntityLoad);
 		ServerEntityEvents.ENTITY_LOAD.register(HostBridge::onEntityLoad);
+		ServerEntityEvents.ENTITY_LOAD.register(Leads::onEntityLoad);
 		ServerTickEvents.END_SERVER_TICK.register(WorldBridge::tick);
 		LOG.info("passthrough loaded");
 	}

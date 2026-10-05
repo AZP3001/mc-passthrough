@@ -351,6 +351,9 @@ namespace
 	} g_props;
 	void props_clear_all();
 	void world_mobs_message(const std::string &m);
+	void leash_use(Ped player, const std::string &m);
+	void leash_gone(int id);
+	void boats_message(const std::string &m);
 	void animal_message(const std::string &m);
 	void command_message(Ped player, const std::string &m);
 	void enderthief_message(Ped player, const std::string &m);
@@ -3550,6 +3553,21 @@ namespace
 				mobhit_message(natives::PlayerPedId(), message);
 			return;
 		}
+		if (type == "leashuse")
+		{
+			leash_use(natives::PlayerPedId(), message);
+			return;
+		}
+		if (type == "leashgone")
+		{
+			leash_gone(int(json_num(message, "id", 0.0)));
+			return;
+		}
+		if (type == "boats")
+		{
+			boats_message(message);
+			return;
+		}
 		if (type == "riptide")
 		{
 			// a trident's riptide launched Minecraft's player: Minecraft moves it for the flight, GTA's player follows
@@ -4268,6 +4286,9 @@ namespace
 	void walk_correct(bool keepY)
 	{
 		++g_walk.psetId;
+		// (Minecraft's position from before it got this doesn't count: taken for where the player is, a teleport of over
+		// 20 m looked like Minecraft running off, was corrected again every frame, and Minecraft never caught up)
+		g_drive.havePos = false;
 		sendf("{\"t\":\"pset\",\"id\":%d,\"pos\":[%.3f,%.3f,%.3f],\"keepY\":%s}", g_walk.psetId, g_walk.x, g_walk.z + g_yOffset, -g_walk.y,
 			keepY ? "true" : "false");
 	}
@@ -5659,6 +5680,732 @@ namespace
 			it = now > it->second + 20000 ? g_intimidated.erase(it) : std::next(it);
 	}
 
+	// ---- Minecraft's lead on GTA's things, and Minecraft's boats carrying GTA's people ----
+
+	Vector3 v3(float x, float y, float z)
+	{
+		Vector3 v = {};
+		v.x = x;
+		v.y = y;
+		v.z = z;
+		return v;
+	}
+
+	float dist3(const Vector3 &a, const Vector3 &b)
+	{
+		return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+	}
+
+	/// One end of a lead: Steve's hand, a GTA person (by the neck), car or thing (a point on it), a fixed spot (a wall,
+	/// the street, a ceiling, one of Minecraft's blocks), or Minecraft's own mobs (Minecraft has that end).
+	struct LeashEnd
+	{
+		int kind = 0;       // 0 Steve's hand, 1 a GTA entity, 2 a fixed spot, 3 Minecraft's mobs
+		Entity e = 0;
+		int bone = 0;       // a person: the bone it's tied at
+		Vector3 local = {}; // a car or a thing: the point on it, in its own frame
+		Vector3 world = {}; // a fixed spot
+	};
+	struct Leash
+	{
+		int id = 0;
+		LeashEnd a, b;       // a: what's on the lead; b: what holds it (Steve's hand, or what it's tied to)
+		float length = 4.0f; // slack up to this far (m)
+		int nextTaskAt = 0;  // a person led: when to tell them again to walk after
+		int correctedAt = 0; // Steve held back: when Minecraft was last told
+	};
+	std::vector<Leash> g_leashes;
+	int g_leashNext = 1;
+	bool g_leashesSent = false;
+	constexpr size_t kMaxLeashes = 32;
+	constexpr float kLeashSnap = 11.0f; // stretched further (a car tearing off, a teleport): it snaps (Minecraft's own snap at 12)
+	constexpr int kNeckBone = 0x9995;
+
+	// Minecraft's boats near the player, and GTA's people and animals sat in them
+	struct McBoat
+	{
+		int id;
+		float x, y, z, yaw; // GTA coordinates; Minecraft's yaw
+		float vx, vy, vz;
+		int free;
+		bool catches; // takes in who walks into it (not while Steve rows it)
+	};
+	std::vector<McBoat> g_mcBoats;
+	int64_t g_mcBoatsNs = 0;
+	struct Rider
+	{
+		int boat = 0;
+		bool seated = false;    // Minecraft has given them the seat
+		int askedAt = 0;
+		float x = 0, y = 0, z = 0, heading = 0; // the seat (GTA coordinates, feet)
+		int lostAt = 0;         // Minecraft stopped listing them (the boat broke)
+	};
+	std::map<Ped, Rider> g_riders;
+	std::unordered_map<Ped, int> g_riderFreedAt;
+	int g_nextBoatCatchAt = 0;
+
+	/// Steve's hand (GTA coordinates): Minecraft's player while it moves the player, else GTA's.
+	Vector3 hand_point(Ped player)
+	{
+		if (g_walk.on || g_carFly.on)
+			return v3(g_walk.x, g_walk.y, g_walk.z + 1.1f);
+		const Vector3 p = natives::GetEntityCoords(player, TRUE);
+		return v3(p.x, p.y, p.z + 0.1f);
+	}
+
+	Vector3 leash_point(Ped player, const LeashEnd &end)
+	{
+		if (end.kind == 0)
+			return hand_point(player);
+		if (end.kind == 1)
+			return end.bone != 0 ? natives::GetPedBoneCoords(end.e, end.bone)
+				: natives::GetOffsetFromEntityInWorldCoords(end.e, end.local.x, end.local.y, end.local.z);
+		return end.world;
+	}
+
+	/// What moves when an end is pulled: the person, car or thing (a person in a car: the car; Steve in a car: his car), or
+	/// 0 (Steve on foot, a fixed spot).
+	Entity leash_body(Ped player, const LeashEnd &end)
+	{
+		if (end.kind == 0)
+			return natives::IsPedInAnyVehicle(player, FALSE) ? Entity(natives::GetVehiclePedIsIn(player, FALSE)) : 0;
+		if (end.kind != 1)
+			return 0;
+		if (natives::GetEntityType(end.e) == 1 && natives::IsPedInAnyVehicle(end.e, FALSE))
+			return natives::GetVehiclePedIsIn(end.e, FALSE);
+		return end.e;
+	}
+
+	std::unordered_map<Hash, float> g_massOf;
+
+	/// Roughly how heavy a GTA thing is (kg): people by build (the heavy-set twice a slim one), animals, cars and things by
+	/// their size (a bicycle a few kilos).
+	float entity_mass(Entity e)
+	{
+		const Hash model = natives::GetEntityModel(e);
+		if (const auto known = g_massOf.find(model); known != g_massOf.end())
+			return known->second;
+		Vector3 mn = {}, mx = {};
+		natives::GetModelDimensions(model, &mn, &mx);
+		const float volume = std::max(0.001f, (mx.x - mn.x) * (mx.y - mn.y) * (mx.z - mn.z));
+		float kg;
+		switch (natives::GetEntityType(e))
+		{
+		case 1:
+		{
+			static const std::unordered_set<Hash> heavy = [] {
+				std::unordered_set<Hash> s;
+				for (const char *m : {"a_f_m_fatbla_01", "a_f_m_fatcult_01", "a_f_m_fatwhite_01", "a_m_m_fatlatin_01", "a_m_m_genfat_01",
+						 "a_m_m_genfat_02", "a_m_m_og_boss_01", "s_m_m_bouncer_01", "u_m_y_babyd", "ig_babyd", "a_m_m_salton_01", "a_m_m_salton_03"})
+					s.insert(natives::GetHashKey(m));
+				return s;
+			}();
+			kg = !natives::IsPedHuman(e) ? std::clamp(volume * 120.0f, 2.0f, 700.0f) : heavy.count(model) ? 140.0f : 70.0f;
+			break;
+		}
+		case 2:
+			kg = natives::IsThisModelABicycle(model) ? 15.0f : std::max(300.0f, volume * 110.0f);
+			break;
+		default:
+			kg = std::clamp(volume * 250.0f, 1.0f, 20000.0f);
+			break;
+		}
+		g_massOf[model] = kg;
+		return kg;
+	}
+
+	/// How much an end can pull along (kg): Steve 100 (more with Minecraft's strength), a person a little less than their
+	/// own weight (none lying down), a car three times its own; a thing or a fixed spot nothing.
+	float leash_strength(const LeashEnd &end, Entity body)
+	{
+		if (end.kind == 0 && body == 0)
+		{
+			const int strong = mc_effect("strength");
+			return 100.0f + (strong >= 0 ? 60.0f * float(strong + 1) : 0.0f);
+		}
+		if (body == 0 || g_riders.count(body))
+			return 0.0f;
+		switch (natives::GetEntityType(body))
+		{
+		case 1:
+			return natives::IsPedDeadOrDying(body) || natives::IsPedRagdoll(body) ? 0.0f : entity_mass(body) * 0.9f;
+		case 2:
+			return entity_mass(body) * 3.0f;
+		default:
+			return 0.0f;
+		}
+	}
+
+	/// Whether a lead can move this end at all (not Steve on foot, a fixed spot, or someone sat in a boat).
+	bool leash_movable(const LeashEnd &end, Entity body)
+	{
+		return body != 0 && (end.kind == 0 || end.kind == 1) && !g_riders.count(body);
+	}
+
+	Vector3 leash_velocity(Ped player, const LeashEnd &end, Entity body)
+	{
+		if (end.kind == 0 && body == 0)
+			return g_walk.on ? g_drive.vel : natives::GetEntityVelocity(player);
+		return body != 0 ? natives::GetEntityVelocity(body) : v3(0, 0, 0);
+	}
+
+	/// The end at `p` held back: no further than the lead from the other end at `c` (as at a wall).
+	void leash_restrain(Ped player, Leash &l, const LeashEnd &end, Entity body, const Vector3 &p, const Vector3 &c, int now)
+	{
+		const float d = dist3(p, c);
+		if (d <= l.length || d < 1e-3f)
+			return;
+		const float ux = (p.x - c.x) / d, uy = (p.y - c.y) / d, uz = (p.z - c.z) / d, over = d - l.length;
+		if (end.kind == 0 && body == 0)
+		{
+			// Steve: held back, Minecraft told where he stopped (as at a wall Minecraft didn't know)
+			if (g_walk.on)
+			{
+				g_walk.x -= ux * over;
+				g_walk.y -= uy * over;
+				if (now - l.correctedAt > 100)
+				{
+					walk_correct(true);
+					l.correctedAt = now;
+				}
+			}
+			else if (!natives::IsPedRagdoll(player))
+			{
+				const Vector3 q = natives::GetEntityCoords(player, TRUE);
+				natives::SetEntityCoordsNoOffset(player, q.x - ux * over, q.y - uy * over, q.z);
+			}
+			return;
+		}
+		if (body == 0 || g_riders.count(body))
+			return;
+		if (natives::GetEntityType(body) == 1 && !natives::IsPedRagdoll(body) && !natives::IsPedDeadOrDying(body))
+		{
+			// someone walking (or running) off: they get no further
+			const Vector3 q = natives::GetEntityCoords(body, TRUE);
+			natives::SetEntityCoordsNoOffset(body, q.x - ux * over, q.y - uy * over, q.z);
+			return;
+		}
+		// a car, a thing, someone lying down: what took it further is gone, and it's drawn back a little
+		const Vector3 v = natives::GetEntityVelocity(body);
+		const float out = std::max(0.0f, v.x * ux + v.y * uy + v.z * uz) + std::min(over * 3.0f, 6.0f);
+		natives::SetEntityVelocity(body, v.x - ux * out, v.y - uy * out, v.z - uz * out);
+	}
+
+	/// The end `body` (its lead at `p`) pulled along toward `c` by something strong enough, moving off at `speed`.
+	void leash_lead(Leash &l, Entity body, const Vector3 &p, const Vector3 &c, float speed, int now)
+	{
+		const float d = dist3(p, c);
+		if (d <= l.length || d < 1e-3f || g_riders.count(body))
+			return;
+		const float ux = (c.x - p.x) / d, uy = (c.y - p.y) / d, uz = (c.z - p.z) / d, over = d - l.length;
+		const int type = natives::GetEntityType(body);
+		if (type == 1)
+		{
+			const bool down = natives::IsPedDeadOrDying(body) || natives::IsPedRagdoll(body);
+			if (!down && over < 1.6f && speed < 4.5f)
+			{
+				// led: walks after (as Minecraft's mobs on a lead do), never more than a little behind
+				if (now >= l.nextTaskAt)
+				{
+					const float stop = l.length * 0.6f;
+					natives::TaskGoStraightToCoord(body, c.x - ux * stop, c.y - uy * stop, c.z, over > 0.7f ? 2.0f : 1.0f, 2500, 40000.0f, 0.5f);
+					l.nextTaskAt = now + 400;
+				}
+				if (over > 0.4f)
+				{
+					const Vector3 q = natives::GetEntityCoords(body, TRUE);
+					natives::SetEntityCoordsNoOffset(body, q.x + ux * (over - 0.4f), q.y + uy * (over - 0.4f), q.z);
+				}
+				return;
+			}
+			// pulled harder than anyone walks (a car, a sprint): off their feet and dragged
+			if (!down)
+				natives::SetPedToRagdoll(body, 1500);
+		}
+		else if (type == 3)
+		{
+			natives::FreezeEntityPosition(body, FALSE); // (signs, bins, doors: torn loose)
+			natives::SetEntityDynamic(body, TRUE);
+		}
+		const Vector3 v = natives::GetEntityVelocity(body);
+		const float along = v.x * ux + v.y * uy + v.z * uz, want = std::min(15.0f, speed + over * 2.5f);
+		if (along < want)
+			natives::SetEntityVelocity(body, v.x + ux * (want - along), v.y + uy * (want - along), v.z + uz * (want - along) + (type == 1 ? 0.3f : 0.0f));
+	}
+
+	/// A taut lead: the end moving off (or, both still, the stronger) pulls; it moves the other end along if it's strong
+	/// enough for its weight (a slim person yes, a heavy-set one or a car not, for Steve), else it's held back itself.
+	void leash_pull(Ped player, Leash &l, const Vector3 &pa, const Vector3 &pb, float d, int now)
+	{
+		const Entity bodyA = leash_body(player, l.a), bodyB = leash_body(player, l.b);
+		const Vector3 va = leash_velocity(player, l.a, bodyA), vb = leash_velocity(player, l.b, bodyB);
+		const float ux = (pb.x - pa.x) / d, uy = (pb.y - pa.y) / d, uz = (pb.z - pa.z) / d;
+		const float outA = -(va.x * ux + va.y * uy + va.z * uz), outB = vb.x * ux + vb.y * uy + vb.z * uz;
+		const float sA = leash_strength(l.a, bodyA), sB = leash_strength(l.b, bodyB);
+		const bool still = std::fabs(outA - outB) <= 0.25f;
+		const bool aPulls = still ? sA >= sB : outA > outB;
+		const LeashEnd &puller = aPulls ? l.a : l.b, &other = aPulls ? l.b : l.a;
+		const Entity pBody = aPulls ? bodyA : bodyB, oBody = aPulls ? bodyB : bodyA;
+		const Vector3 &pp = aPulls ? pa : pb, &op = aPulls ? pb : pa;
+		const float strength = aPulls ? sA : sB, speed = std::max(0.0f, aPulls ? outA : outB);
+		if (leash_movable(other, oBody) && strength > 0.0f && strength >= entity_mass(oBody))
+			leash_lead(l, oBody, op, pp, speed, now);
+		else if (still)
+		{
+			// nobody moving off, and the stronger can't draw the other in: it stays as it is
+		}
+		else if (pBody != 0 && natives::GetEntityType(pBody) == 2 && other.kind == 0 && oBody == 0)
+		{
+			// a car driving off with the lead in Steve's hand: it stretches till it snaps
+		}
+		else
+			leash_restrain(player, l, puller, pBody, pp, op, now);
+	}
+
+	void leash_event(const Leash &l, const char *what, const Vector3 &at)
+	{
+		sendf("{\"t\":\"leashevt\",\"id\":%d,\"e\":\"%s\",\"pos\":[%.3f,%.3f,%.3f]}", l.id, what, at.x, at.z + g_yOffset, -at.y);
+	}
+
+	/// Every lead's ends for Minecraft, which draws them ({"t":"leashes","l":[[id,kind,ax,ay,az,bx,by,bz],...]}, Minecraft
+	/// coordinates; kind 0 in Steve's hand, 1 tied to b, 2 Minecraft's mobs tied to b), every frame while there are any.
+	void leash_send(Ped player)
+	{
+		if (g_leashes.empty() && !g_leashesSent)
+			return;
+		std::string out = "{\"t\":\"leashes\",\"l\":[";
+		for (const Leash &l : g_leashes)
+		{
+			const int kind = l.b.kind == 0 ? 0 : l.a.kind == 3 ? 2 : 1;
+			const Vector3 pb = leash_point(player, l.b), pa = l.a.kind == 3 ? pb : leash_point(player, l.a);
+			char e[160];
+			snprintf(e, sizeof(e), "%s[%d,%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f]", out.back() == '[' ? "" : ",", l.id, kind, pa.x, pa.z + g_yOffset, -pa.y, pb.x,
+				pb.z + g_yOffset, -pb.y);
+			out += e;
+		}
+		g_ws.send(out + "]}");
+		g_leashesSent = !g_leashes.empty();
+	}
+
+	/// Every frame: leads whose thing is gone drop, overstretched ones snap, taut ones pull (leash_pull); Minecraft draws them.
+	void leash_tick(Ped player)
+	{
+		const int now = natives::GetGameTimer();
+		for (size_t i = 0; i < g_leashes.size();)
+		{
+			Leash &l = g_leashes[i];
+			const bool aOk = l.a.kind != 1 || natives::DoesEntityExist(l.a.e), bOk = l.b.kind != 1 || natives::DoesEntityExist(l.b.e);
+			if (!aOk || !bOk)
+			{
+				// what it was on is gone (cleaned up by GTA, deleted): the lead drops
+				const LeashEnd &left = aOk && l.a.kind != 3 ? l.a : l.b;
+				if (left.kind != 1 || natives::DoesEntityExist(left.e))
+					leash_event(l, "drop", leash_point(player, left));
+				g_leashes.erase(g_leashes.begin() + i);
+				continue;
+			}
+			if (l.a.kind == 3)
+			{
+				++i; // (Minecraft's mobs: its own lead pulls them)
+				continue;
+			}
+			const Vector3 pa = leash_point(player, l.a), pb = leash_point(player, l.b);
+			const float d = dist3(pa, pb);
+			if (d > kLeashSnap)
+			{
+				leash_event(l, "snap", pa);
+				g_leashes.erase(g_leashes.begin() + i);
+				continue;
+			}
+			if (d > l.length && !g_noInput)
+				leash_pull(player, l, pa, pb, d, now);
+			++i;
+		}
+		leash_send(player);
+	}
+
+	/// What the crosshair is on within `reach` of Steve: a person, car or thing (`hit`), or a surface of the map or of one of
+	/// Minecraft's blocks (hit 0), where (`at`) and facing (`n`). False if there's nothing.
+	bool aim_target(Ped player, float reach, Entity &hit, Vector3 &at, Vector3 &n)
+	{
+		const Vector3 r = natives::GetFinalRenderedCamRot(2), eye = natives::GetFinalRenderedCamCoord();
+		const float h = r.z * 3.14159265f / 180.0f, pt = r.x * 3.14159265f / 180.0f;
+		const float ux = -std::sin(h) * std::cos(pt), uy = std::cos(h) * std::cos(pt), uz = std::sin(pt);
+		const Vector3 me = hand_point(player);
+		const float along = std::max(0.0f, (me.x - eye.x) * ux + (me.y - eye.y) * uy + (me.z - eye.z) * uz - 0.5f);
+		const float sx = eye.x + ux * along, sy = eye.y + uy * along, sz = eye.z + uz * along, span = reach + 1.0f;
+		const Entity ignore = natives::IsPedInAnyVehicle(player, FALSE) ? Entity(natives::GetVehiclePedIsIn(player, FALSE)) : Entity(player);
+		BOOL any = FALSE;
+		hit = 0;
+		const int probe = natives::StartShapeTestLosProbe(sx, sy, sz, sx + ux * span, sy + uy * span, sz + uz * span, 1 | 2 | 4 | 8 | 16, ignore, 7);
+		if (natives::GetShapeTestResult(probe, &any, &at, &n, &hit) != 2)
+			any = FALSE;
+		if (any && hit != 0 && (g_props.handles.count(hit) || g_doublePeds.count(hit) || natives::IsEntityAttached(hit)))
+			hit = 0; // (one of Minecraft's blocks: a fixed spot; a mob's double or something carried: not a thing of its own)
+		if (hit == 0 || natives::GetEntityType(hit) != 1)
+		{
+			// the crosshair just past someone (a person is thin): whoever is closest to its line, within a hand's breadth
+			const float limit = any ? std::sqrt((at.x - sx) * (at.x - sx) + (at.y - sy) * (at.y - sy) + (at.z - sz) * (at.z - sz)) : span;
+			float best = 0.35f;
+			int handles[256];
+			const int count = worldGetAllPeds(handles, 256);
+			for (int i = 0; i < count; ++i)
+			{
+				const Ped q = handles[i];
+				if (q == player || g_doublePeds.count(q))
+					continue;
+				const Vector3 o = natives::GetEntityCoords(q, TRUE);
+				const float px = o.x - sx, py = o.y - sy, pz = o.z + 0.2f - sz, t = px * ux + py * uy + pz * uz;
+				if (t < 0.0f || t > limit + 0.3f)
+					continue;
+				const float lx = px - ux * t, ly = py - uy * t, lz = (pz - uz * t) * 0.5f, off = std::sqrt(lx * lx + ly * ly + lz * lz);
+				if (off < best)
+				{
+					best = off;
+					hit = q;
+					at = v3(o.x - lx, o.y - ly, o.z);
+					any = TRUE;
+				}
+			}
+		}
+		return any != FALSE;
+	}
+
+	/// The end of a lead at what the crosshair is on: a person by the neck, a car or thing at that point, or the spot.
+	LeashEnd leash_end_at(Entity hit, const Vector3 &at, const Vector3 &n)
+	{
+		LeashEnd end;
+		if (hit == 0)
+		{
+			end.kind = 2;
+			end.world = v3(at.x + n.x * 0.05f, at.y + n.y * 0.05f, at.z + n.z * 0.05f);
+			return end;
+		}
+		end.kind = 1;
+		end.e = hit;
+		if (natives::GetEntityType(hit) == 1)
+		{
+			const Vector3 neck = natives::GetPedBoneCoords(hit, kNeckBone), o = natives::GetEntityCoords(hit, TRUE);
+			if (dist3(neck, o) < 1.5f)
+			{
+				end.bone = kNeckBone;
+				return end;
+			}
+		}
+		end.local = natives::GetOffsetFromEntityGivenWorldCoords(hit, at.x, at.y, at.z);
+		return end;
+	}
+
+	/// Right click with a lead or shears in Minecraft at GTA's world ({"t":"leashuse","item":"lead"|"shears","mobs":n}; n:
+	/// Minecraft's own mobs on leads in Steve's hand). With leads in hand: they're tied to what the crosshair is on (a
+	/// person, car, thing, wall, the street, a ceiling); the thing one is on again: let go. Nothing in hand: what's tied
+	/// there comes back into the hand, or a new lead goes on that person, car or thing. Shears: its leads are cut.
+	void leash_use(Ped player, const std::string &m)
+	{
+		if (g_noInput)
+			return;
+		const std::string item = json_str(m, "item");
+		const int mobs = int(json_num(m, "mobs", 0.0));
+		Entity hit = 0;
+		Vector3 at = {}, n = {};
+		const bool any = aim_target(player, std::max(6.0f, g_meleeRange), hit, at, n);
+		if (!any)
+			return; // (the sky: nothing to tie to)
+		auto on = [&](const LeashEnd &e) {
+			return (hit != 0 && e.kind == 1 && e.e == hit) || (hit == 0 && e.kind == 2 && dist3(e.world, at) < 1.2f);
+		};
+		if (item == "shears")
+		{
+			for (size_t i = 0; i < g_leashes.size();)
+			{
+				const Leash &l = g_leashes[i];
+				if (on(l.a) || on(l.b))
+				{
+					leash_event(l, "cut", leash_point(player, l.a.kind == 3 ? l.b : l.a));
+					g_leashes.erase(g_leashes.begin() + i);
+				}
+				else
+					++i;
+			}
+			return;
+		}
+		bool holding = mobs > 0;
+		for (const Leash &l : g_leashes)
+			holding = holding || l.b.kind == 0;
+		if (holding)
+		{
+			const LeashEnd to = leash_end_at(hit, at, n);
+			for (size_t i = g_leashes.size(); i-- > 0;)
+			{
+				Leash &l = g_leashes[i];
+				if (l.b.kind != 0)
+					continue;
+				if (on(l.a))
+				{
+					// the thing itself again: let go of it
+					leash_event(l, "drop", leash_point(player, l.a));
+					g_leashes.erase(g_leashes.begin() + i);
+					continue;
+				}
+				l.b = to;
+				const Vector3 pa = leash_point(player, l.a), pb = leash_point(player, l.b);
+				l.length = std::clamp(dist3(pa, pb), 1.0f, 8.0f);
+				leash_event(l, "tied", pb);
+			}
+			if (mobs > 0 && g_leashes.size() < kMaxLeashes)
+			{
+				Leash l;
+				l.id = g_leashNext++;
+				l.a.kind = 3;
+				l.b = to;
+				g_leashes.push_back(l);
+				leash_send(player); // (Minecraft has the spot before it ties its mobs there)
+				leash_event(l, "tiemobs", leash_point(player, l.b));
+			}
+			return;
+		}
+		// nothing in hand: what's tied here comes back into it (as from a fence knot)
+		bool took = false;
+		const Vector3 hand = hand_point(player);
+		for (size_t i = 0; i < g_leashes.size();)
+		{
+			Leash &l = g_leashes[i];
+			if (l.a.kind == 3 && on(l.b))
+			{
+				leash_event(l, "takemobs", leash_point(player, l.b));
+				g_leashes.erase(g_leashes.begin() + i);
+				took = true;
+				continue;
+			}
+			if (l.a.kind != 3 && l.b.kind != 0 && (on(l.a) || on(l.b)))
+			{
+				l.b = LeashEnd();
+				const Vector3 pa = leash_point(player, l.a);
+				l.length = std::clamp(dist3(pa, hand), 2.0f, 7.0f);
+				leash_event(l, "taken", pa);
+				took = true;
+			}
+			++i;
+		}
+		if (took || hit == 0 || g_leashes.size() >= kMaxLeashes)
+			return;
+		const int type = natives::GetEntityType(hit);
+		if (type < 1 || type > 3)
+			return;
+		// a new lead on that person, car or thing, in Steve's hand
+		Leash l;
+		l.id = g_leashNext++;
+		l.a = leash_end_at(hit, at, n);
+		const Vector3 pa = leash_point(player, l.a);
+		l.length = std::clamp(dist3(pa, hand), 2.0f, 7.0f);
+		g_leashes.push_back(l);
+		leash_send(player);
+		leash_event(l, "new", pa);
+	}
+
+	/// Minecraft's mobs tied at one of GTA's spots are all off it ({"t":"leashgone","id":n}): the spot goes.
+	void leash_gone(int id)
+	{
+		g_leashes.erase(std::remove_if(g_leashes.begin(), g_leashes.end(), [&](const Leash &l) { return l.id == id && l.a.kind == 3; }),
+			g_leashes.end());
+	}
+
+	/// Every lead gone (the passthrough off, /clearall); `drop`: each drops its lead in Minecraft.
+	void leash_clear_all(Ped player, bool drop)
+	{
+		if (g_leashes.empty())
+			return;
+		if (drop)
+			for (const Leash &l : g_leashes)
+				if (l.a.kind != 3 && (l.a.kind != 1 || natives::DoesEntityExist(l.a.e)))
+					leash_event(l, "drop", leash_point(player, l.a));
+		g_leashes.clear();
+		g_leashesSent = g_ws.connected();
+		leash_send(player); // (none left: Minecraft lets its ends go)
+	}
+
+	/// The rows of numbers of a JSON array of arrays ("key":[[1,2],[3,4]]).
+	std::vector<std::vector<double>> json_rows(const std::string &m, const char *key)
+	{
+		std::vector<std::vector<double>> rows;
+		const char *p = json_value(m, key);
+		if (p == nullptr || *p != '[')
+			return rows;
+		++p;
+		while (*p != '\0')
+		{
+			while (*p == ' ' || *p == ',')
+				++p;
+			if (*p != '[')
+				break;
+			++p;
+			std::vector<double> row;
+			while (*p != '\0' && *p != ']')
+			{
+				char *end = nullptr;
+				const double v = std::strtod(p, &end);
+				if (end == p)
+				{
+					++p;
+					continue;
+				}
+				row.push_back(v);
+				p = end;
+			}
+			if (*p == ']')
+				++p;
+			rows.push_back(std::move(row));
+		}
+		return rows;
+	}
+
+	/// {"t":"boats","b":[[id,x,y,z,yaw,vx,vy,vz,free,catches],...],"s":[[ped,boat,x,y,z,yaw],...]} (Minecraft coordinates):
+	/// Minecraft's boats near the player, and the seat of each of GTA's people sat in one, every tick while there are any.
+	void boats_message(const std::string &m)
+	{
+		g_mcBoats.clear();
+		for (const auto &r : json_rows(m, "b"))
+			if (r.size() >= 10)
+				g_mcBoats.push_back({int(r[0]), float(r[1]), float(-r[3]), float(r[2]) - g_yOffset, float(r[4]), float(r[5]), float(-r[7]),
+					float(r[6]), int(r[8]), r[9] != 0.0});
+		g_mcBoatsNs = now_nanos();
+		const int now = natives::GetGameTimer();
+		std::set<Ped> seen;
+		for (const auto &r : json_rows(m, "s"))
+		{
+			if (r.size() < 6)
+				continue;
+			const auto it = g_riders.find(Ped(r[0]));
+			if (it == g_riders.end())
+				continue;
+			Rider &rd = it->second;
+			rd.boat = int(r[1]);
+			rd.seated = true;
+			rd.lostAt = 0;
+			rd.x = float(r[2]);
+			rd.y = float(-r[4]);
+			rd.z = float(r[3]) - g_yOffset;
+			rd.heading = wrap_degrees(180.0f - float(r[5]));
+			seen.insert(it->first);
+		}
+		for (auto &[ped, rd] : g_riders)
+			if (rd.seated && !seen.count(ped) && rd.lostAt == 0)
+				rd.lostAt = now; // (the boat broke: out they come, in a moment)
+	}
+
+	/// Someone sat in a boat gets out (the boat broke, they died, the passthrough is off); `tell`: Minecraft frees the seat.
+	void rider_free(Ped ped, bool tell)
+	{
+		if (natives::DoesEntityExist(ped))
+		{
+			natives::FreezeEntityPosition(ped, FALSE);
+			natives::SetEntityCollision(ped, TRUE, TRUE);
+			natives::ClearPedTasksImmediately(ped);
+			natives::SetBlockingOfNonTemporaryEvents(ped, FALSE);
+			natives::SetPedCanRagdoll(ped, TRUE);
+		}
+		if (tell)
+			sendf("{\"t\":\"boatleave\",\"ped\":%d}", ped);
+		g_riderFreedAt[ped] = natives::GetGameTimer();
+	}
+
+	void riders_clear_all(bool tell)
+	{
+		for (const auto &[ped, rd] : g_riders)
+			rider_free(ped, tell);
+		g_riders.clear();
+		g_mcBoats.clear();
+	}
+
+	/// Every frame: GTA's people and animals in Minecraft's boats sit where their seat is (carried with the boat); ten
+	/// times a second, a boat with room that Steve isn't rowing takes in whoever walks into it, as Minecraft's boats do.
+	void boats_tick(Ped player)
+	{
+		if (g_riders.empty() && g_mcBoats.empty())
+			return;
+		const int now = natives::GetGameTimer();
+		const float dt = std::clamp(float(now_nanos() - g_mcBoatsNs) * 1e-9f, 0.0f, 0.1f);
+		static const char *const kSitDict = "amb@world_human_picnic@male@base", *const kSitAnim = "base";
+		for (auto it = g_riders.begin(); it != g_riders.end();)
+		{
+			const Ped ped = it->first;
+			Rider &rd = it->second;
+			const bool gone = !natives::DoesEntityExist(ped);
+			const bool lost = rd.seated && rd.lostAt != 0 && now - rd.lostAt > 300;
+			if (gone || lost || natives::IsPedDeadOrDying(ped) || (!rd.seated && now - rd.askedAt > 1500))
+			{
+				rider_free(ped, !lost); // (a broken boat has freed its seats itself)
+				it = g_riders.erase(it);
+				continue;
+			}
+			if (rd.seated)
+			{
+				float vx = 0.0f, vy = 0.0f, vz = 0.0f;
+				for (const McBoat &b : g_mcBoats)
+					if (b.id == rd.boat)
+					{
+						vx = b.vx;
+						vy = b.vy;
+						vz = b.vz;
+					}
+				Vector3 mn = {}, mx = {};
+				natives::GetModelDimensions(natives::GetEntityModel(ped), &mn, &mx);
+				natives::FreezeEntityPosition(ped, TRUE);
+				natives::SetEntityCollision(ped, FALSE, FALSE);
+				natives::SetBlockingOfNonTemporaryEvents(ped, TRUE);
+				natives::SetPedCanRagdoll(ped, FALSE);
+				natives::SetEntityCoordsNoOffset(ped, rd.x + vx * dt, rd.y + vy * dt, rd.z + vz * dt - std::min(mn.z, -0.3f));
+				natives::SetEntityHeading(ped, rd.heading);
+				if (natives::IsPedHuman(ped) && !natives::IsEntityPlayingAnim(ped, kSitDict, kSitAnim))
+				{
+					natives::RequestAnimDict(kSitDict);
+					if (natives::HasAnimDictLoaded(kSitDict))
+						natives::TaskPlayAnimLoop(ped, kSitDict, kSitAnim);
+				}
+			}
+			++it;
+		}
+		if (g_mcBoats.empty() || g_noInput || now < g_nextBoatCatchAt)
+			return;
+		g_nextBoatCatchAt = now + 100;
+		int handles[256];
+		const int count = worldGetAllPeds(handles, 256);
+		for (const McBoat &b : g_mcBoats)
+		{
+			int room = b.free;
+			for (const auto &[ped, rd] : g_riders)
+				room -= rd.boat == b.id && !rd.seated ? 1 : 0;
+			if (!b.catches || room <= 0)
+				continue;
+			for (int i = 0; i < count && room > 0; ++i)
+			{
+				const Ped q = handles[i];
+				if (q == player || g_doublePeds.count(q) || g_riders.count(q) || natives::IsPedDeadOrDying(q) || natives::IsPedInAnyVehicle(q, FALSE) ||
+					natives::IsEntityAMissionEntity(q))
+					continue;
+				if (const auto freed = g_riderFreedAt.find(q); freed != g_riderFreedAt.end() && now - freed->second < 3000)
+					continue;
+				const Vector3 o = natives::GetEntityCoords(q, TRUE);
+				if (std::fabs(o.x - b.x) > 1.2f || std::fabs(o.y - b.y) > 1.2f)
+					continue;
+				// Minecraft's boat: a box 1.375 across and 0.5625 high (and 0.2 of reach); a person ~0.3 round
+				Vector3 mn = {}, mx = {};
+				natives::GetModelDimensions(natives::GetEntityModel(q), &mn, &mx);
+				const float feet = o.z + std::min(mn.z, -0.3f);
+				if (std::fabs(o.x - b.x) > 0.6875f + 0.2f + 0.3f || std::fabs(o.y - b.y) > 0.6875f + 0.2f + 0.3f || feet < b.z - 0.6f || feet > b.z + 0.8f)
+					continue;
+				Rider rd;
+				rd.boat = b.id;
+				rd.askedAt = now;
+				g_riders[q] = rd;
+				sendf("{\"t\":\"boatgrab\",\"boat\":%d,\"ped\":%d}", b.id, q);
+				--room;
+			}
+		}
+		for (auto it = g_riderFreedAt.begin(); it != g_riderFreedAt.end();)
+			it = now - it->second > 10000 ? g_riderFreedAt.erase(it) : std::next(it);
+	}
+
 	void enderthief_message(Ped player, const std::string &m)
 	{
 		const char *pos = json_value(m, "pos");
@@ -5854,6 +6601,8 @@ namespace
 			g_hotClusters.clear();
 			g_water.clear();
 			g_waterClusters.clear();
+			leash_clear_all(player, false);
+			riders_clear_all(false);
 			natives::ClearArea(me.x, me.y, me.z, 400.0f);
 			natives::StopFireInRange(me.x, me.y, me.z, 400.0f);
 			natives::Notify("Cleared: Minecraft's mobs, items and blocks, and GTA's cars, people and fires around you");
@@ -6252,6 +7001,9 @@ namespace
 			g_wantChat = g_wantInventory = false;
 			aim_cam_tick(false);
 			gun_model_tick(ped, false);
+			leash_clear_all(ped, false);
+			if (!g_riders.empty())
+				riders_clear_all(g_ws.connected());
 			std::string ignored;
 			while (g_ws.poll(ignored))
 			{
@@ -6350,6 +7102,8 @@ namespace
 		stamina_tick(ped, input);
 		thieves_tick(ped);
 		bow_tick(ped);
+		leash_tick(ped);
+		boats_tick(ped);
 		cheats_tick(ped);
 		arrows_tick();
 		// flying (Minecraft's flight, the elytra, a flying car): nothing driving underneath knocks the player down

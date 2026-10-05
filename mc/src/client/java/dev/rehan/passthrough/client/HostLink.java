@@ -6,6 +6,7 @@ import com.google.gson.JsonParser;
 import dev.rehan.passthrough.HostBridge;
 import dev.rehan.passthrough.HostCollision;
 import dev.rehan.passthrough.HostWater;
+import dev.rehan.passthrough.Leads;
 import dev.rehan.passthrough.MobWar;
 import dev.rehan.passthrough.Nether;
 import dev.rehan.passthrough.Passthrough;
@@ -148,6 +149,24 @@ public final class HostLink extends WebSocketServer {
 						at.get(2).getAsDouble(), m.has("yaw") ? m.get("yaw").getAsDouble() : 0.0});
 				}
 				case "totem" -> WorldBridge.totem();
+				case "leashes" -> {
+					JsonArray list = m.getAsJsonArray("l");
+					double[][] leads = new double[list.size()][];
+					for (int i = 0; i < leads.length; i++) {
+						leads[i] = HostState.doubles(list.get(i).getAsJsonArray());
+					}
+
+					Leads.update(leads);
+					// the client's copies of the ends at once, every frame (the server's come a tick or two later)
+					Minecraft minecraft = Minecraft.getInstance();
+					minecraft.execute(() -> placeLeadEnds(minecraft, leads));
+				}
+				case "leashevt" -> {
+					JsonArray at = m.getAsJsonArray("pos");
+					Leads.event(m.get("id").getAsInt(), m.get("e").getAsString(), at.get(0).getAsDouble(), at.get(1).getAsDouble(), at.get(2).getAsDouble());
+				}
+				case "boatgrab" -> Leads.grab(m.get("ped").getAsInt(), m.get("boat").getAsInt());
+				case "boatleave" -> Leads.leave(m.get("ped").getAsInt());
 				case "hostshot" -> {
 					JsonArray at = m.getAsJsonArray("pos"), dir = m.getAsJsonArray("dir");
 					WorldBridge.hostShot(at.get(0).getAsDouble(), at.get(1).getAsDouble(), at.get(2).getAsDouble(), dir.get(0).getAsDouble(),
@@ -172,6 +191,33 @@ public final class HostLink extends WebSocketServer {
 			}
 		} catch (RuntimeException e) {
 			Passthrough.LOG.warn("bad host message {}: {}", message.length() > 200 ? message.substring(0, 200) : message, e.toString());
+		}
+	}
+
+	/** The ends of the host's leads where the host says they are now (client thread). */
+	private static void placeLeadEnds(final Minecraft minecraft, final double[][] leads) {
+		if (minecraft.level == null) {
+			return;
+		}
+
+		java.util.Map<Integer, int[]> ids = Leads.clientIds;
+		for (double[] r : leads) {
+			int[] proxy = r.length >= 8 ? ids.get((int) r[0]) : null;
+			if (proxy == null) {
+				continue;
+			}
+
+			net.minecraft.world.entity.Entity a = proxy[0] >= 0 ? minecraft.level.getEntity(proxy[0]) : null;
+			net.minecraft.world.entity.Entity b = proxy[1] >= 0 ? minecraft.level.getEntity(proxy[1]) : null;
+			if (a != null) {
+				Leads.place(a, Leads.leashedAt(a, r[2], r[3], r[4]));
+				a.setOldPosAndRot();
+			}
+
+			if (b != null) {
+				Leads.place(b, Leads.holdingAt(b, r[5], r[6], r[7]));
+				b.setOldPosAndRot();
+			}
 		}
 	}
 

@@ -49,6 +49,24 @@ You play GTA's story as Steve, with Minecraft's items, blocks, mobs and movement
 - TNT and creepers blow up in both games. Fireworks become rockets, and you can throw potions, wind charges and
   snowballs.
 
+**Leads and boats**
+- Right-click a GTA person, car, sign, door or anything loose with a lead and it's on the lead in your hand. Minecraft
+  draws the lead.
+- What you can pull depends on its weight. Slim people walk after you, and bodies, signs, bins and small doors are
+  dragged along. Heavy-set people, lamp posts and cars don't move, and the lead holds you back instead. A Strength
+  potion lets you pull more.
+- Holding leads, right-click something else to tie them there: another person, a car, a door, a wall, the street, a
+  ceiling, or one of your blocks. Right-click the thing you're leading again to let go of it.
+- When no lead is in your hand, right-click a tied thing (or the spot it's tied to) with a lead to take its lead back.
+  Shears cut every lead on what you click.
+- Tied things can't get further than the lead: a person tied to a lamp post stays there, and a car tied to a wall
+  can't drive off. A car tied to a person drags them, and a car tied to another car tows it. Stretched past 11 blocks,
+  a lead snaps.
+- Minecraft's own mobs on leads in your hand get tied to the GTA thing you click, too.
+- Minecraft's boats take in GTA's people and animals who walk into them, exactly as they take in Minecraft's mobs:
+  only while nobody rows them, up to two per boat (one in a chest boat). They sit in the boat wherever it goes, until
+  the boat breaks.
+
 **Mobs and the world**
 - Spawn a cow, pig, chicken, rabbit, cat, wolf, fox, ocelot, dolphin or fish and it becomes GTA's own animal.
 - Minecraft's mobs bump into GTA's walls. A car or a flung person that hits a mob kills it.
@@ -312,7 +330,7 @@ None of these need GTA:
 curl -sLO https://raw.githubusercontent.com/alloc8or/gta5-nativedb-data/master/natives.json
 python3 gta/tests/check_natives.py natives.json
 
-# the GTA simulator (the script's movement, input, rig, minimap mask, arrows, character switches)
+# the GTA simulator (the script's movement, input, rig, minimap mask, arrows, character switches, leads, boats)
 python3 tests/sim/gen_hashes.py
 g++ -std=c++20 -w -Itests/sim/inc -Igta/third_party/shv "-D__declspec(x)=" -DNOMINMAX tests/sim/sim.cpp -o sim && ./sim
 
@@ -320,6 +338,7 @@ g++ -std=c++20 -w -Itests/sim/inc -Igta/third_party/shv "-D__declspec(x)=" -DNOM
 python3 tests/scratchpad_test_host.py   # screens, portals, melee, projectiles
 python3 tests/walktest.py               # Minecraft movement against GTA's collision, pearls, blocks on walls, water
 python3 tests/features_test.py          # animals, commands, mobs, fires, spectator, HUD health, cutscene input
+python3 tests/leads_test.py             # leads on GTA's things (held, tied, cut), Minecraft's mobs tied there, boat seats
 ```
 
 The GTA side is also compile-checked with MinGW (`x86_64-w64-mingw32-g++ -fsyntax-only`), and the effect with

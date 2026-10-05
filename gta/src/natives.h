@@ -394,6 +394,10 @@ namespace natives
 	inline Vector3 GetEntityRotation(Entity e) { return invoke<Vector3>(0xAFBD61CC738D9EB9, e, 2); }
 	inline void SetEntityDynamic(Entity e, BOOL t) { invoke<Void>(0x1718DE8E3F2823CA, e, t); }
 	inline BOOL IsPedHuman(Ped p) { return invoke<BOOL>(0xB980061DA992779D, p); }
+	// Leads and boats.
+	inline BOOL IsEntityPlayingAnim(Entity e, const char *d, const char *a) { return invoke<BOOL>(0x1F0B79228E461EC9, e, d, a, 3); }
+	inline void ClearPedTasksImmediately(Ped p) { invoke<Void>(0xAAA34F8A7CB32098, p); }
+	inline BOOL IsThisModelABicycle(Hash m) { return invoke<BOOL>(0xBF94DD42F63BDED2, m); }
 
 	inline void Notify(const char *text)
 	{

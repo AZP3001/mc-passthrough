@@ -1,5 +1,6 @@
 package dev.rehan.passthrough.mixin;
 
+import dev.rehan.passthrough.Leads;
 import dev.rehan.passthrough.MobWar;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
@@ -18,7 +19,7 @@ abstract class ProjectileMixin {
 
 	@Inject(method = "canHitEntity(Lnet/minecraft/world/entity/Entity;)Z", at = @At("HEAD"), cancellable = true)
 	private void passthrough$throughProxies(final Entity target, final CallbackInfoReturnable<Boolean> cir) {
-		if (MobWar.isProxy(target) && this.getOwner() instanceof Player) {
+		if (MobWar.isProxy(target) && this.getOwner() instanceof Player || Leads.isProxy(target)) {
 			cir.setReturnValue(false);
 		}
 	}

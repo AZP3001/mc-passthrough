@@ -142,7 +142,7 @@ public final class HostBridge {
 		StringBuilder out = new StringBuilder("{\"t\":\"allmobs\",\"m\":[");
 		int n = 0;
 		for (Entity e : level.getEntities(player, player.getBoundingBox().inflate(64.0), e -> e instanceof LivingEntity && !(e instanceof Player)
-			&& !(e instanceof ArmorStand) && !MobWar.isProxy(e) && e.isAlive())) {
+			&& !(e instanceof ArmorStand) && !MobWar.isProxy(e) && !Leads.isProxy(e) && e.isAlive())) {
 			if (n > 0) {
 				out.append(',');
 			}

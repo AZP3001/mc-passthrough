@@ -92,6 +92,14 @@ const std::map<int, std::array<float, 3>> kBones = {
 	{0x6B52, {0.032f, 0.09f, 0.74f}},   // right eye
 	{0x4ED2, {0.0f, 0.1f, 0.68f}},      // upper lip (straight below the eyes: the head looks level after its tilt)
 };
+// GTA people besides the player (worldGetAllPeds lists them)
+struct SimNpc
+{
+	float x = 0, y = 0, z = 11.4f, vx = 0, vy = 0, vz = 0;
+	Hash model = 0;
+	bool human = true, frozen = false;
+};
+std::map<int, SimNpc> g_npcs;
 struct SimCar
 {
 	bool on = false;
@@ -126,7 +134,7 @@ Hit ray(float x0, float y0, float z0, float x1, float y1, float z1, int flags, i
 		if (b.entity == ignore && ignore != 0)
 			continue;
 		const int type = b.entity == 0 ? 0 : g_types[b.entity];
-		if ((type == 0 && !(flags & 1)) || (type == 2 && !(flags & 2)) || (type == 3 && !(flags & 16)))
+		if ((type == 0 && !(flags & 1)) || (type == 1 && !(flags & 4)) || (type == 2 && !(flags & 2)) || (type == 3 && !(flags & 16)))
 			continue;
 		const float lo[3] = {b.x0, b.y0, b.z0}, hi[3] = {b.x1, b.y1, b.z1};
 		float tmin = 0.0f, tmax = 1.0f;
@@ -219,8 +227,55 @@ PUINT64 nativeCall()
 {
 	std::memset(g_ret, 0, sizeof(g_ret));
 	const UINT64 h = g_hash;
+	const auto npc = g_npcs.find(g_argc > 0 ? I(0) : -1);
 	if (h == H_PlayerPedId)
 		retI(g_playerPed);
+	else if (npc != g_npcs.end() && h == H_GetEntityCoords)
+		retV(npc->second.x, npc->second.y, npc->second.z);
+	else if (npc != g_npcs.end() && h == H_GetEntityVelocity)
+		retV(npc->second.vx, npc->second.vy, npc->second.vz);
+	else if (npc != g_npcs.end() && h == H_SetEntityCoordsNoOffset)
+	{
+		npc->second.x = F(1);
+		npc->second.y = F(2);
+		npc->second.z = F(3);
+	}
+	else if (npc != g_npcs.end() && h == H_SetEntityVelocity)
+	{
+		npc->second.vx = F(1);
+		npc->second.vy = F(2);
+		npc->second.vz = F(3);
+	}
+	else if (npc != g_npcs.end() && h == H_FreezeEntityPosition)
+		npc->second.frozen = I(1) != 0;
+	else if (npc != g_npcs.end() && h == H_GetPedBoneCoords)
+	{
+		const auto b = kBones.find(I(1));
+		const float o[3] = {b != kBones.end() ? b->second[0] : 0.0f, b != kBones.end() ? b->second[1] : 0.0f, b != kBones.end() ? b->second[2] : 0.0f};
+		retV(npc->second.x + o[0], npc->second.y + o[1], npc->second.z + o[2]);
+	}
+	else if (npc != g_npcs.end() && h == H_GetEntityModel)
+		retI(int(npc->second.model));
+	else if (npc != g_npcs.end() && h == H_IsPedHuman)
+		retI(npc->second.human);
+	else if (npc != g_npcs.end() && h == H_GetOffsetFromEntityGivenWorldCoords)
+		retV(F(1) - npc->second.x, F(2) - npc->second.y, F(3) - npc->second.z);
+	else if (npc != g_npcs.end() && h == H_TaskGoStraightToCoord)
+		g_calls.push_back("Walk:" + std::to_string(I(0)));
+	else if (npc != g_npcs.end() && h == H_TaskPlayAnimLoop)
+		g_calls.push_back("Sit:" + std::to_string(I(0)));
+	else if (h == H_GetModelDimensions)
+	{
+		Vector3 *mn = P<Vector3>(1), *mx = P<Vector3>(2);
+		mn->x = -0.3f;
+		mn->y = -0.3f;
+		mn->z = -1.0f;
+		mx->x = 0.3f;
+		mx->y = 0.3f;
+		mx->z = 0.8f;
+	}
+	else if (h == H_HasAnimDictLoaded)
+		retI(1);
 	else if (h == H_GetEntityCoords)
 	{
 		if (I(0) == 1)
@@ -283,7 +338,10 @@ PUINT64 nativeCall()
 	else if (h == H_SetVehicleTyreBurst)
 		g_calls.push_back("TyreBurst:" + std::to_string(I(1)));
 	else if (h == H_SetEntityHeading)
-		g_sped.heading = F(1);
+	{
+		if (I(0) == 1)
+			g_sped.heading = F(1);
+	}
 	else if (h == H_GetEntityHeading)
 		retF(g_sped.heading);
 	else if (h == H_GetGameTimer)
@@ -374,7 +432,14 @@ int worldGetAllVehicles(int *arr, int)
 	arr[0] = 70;
 	return 1;
 }
-int worldGetAllPeds(int *arr, int) { return 0; }
+int worldGetAllPeds(int *arr, int max)
+{
+	int n = 0;
+	for (const auto &[id, p] : g_npcs)
+		if (n < max)
+			arr[n++] = id;
+	return n;
+}
 int worldGetAllObjects(int *arr, int) { return 0; }
 
 // ---- the link ----
@@ -852,6 +917,108 @@ int main()
 	check(std::find(g_calls.begin(), g_calls.end(), "TyreBurst:0") != g_calls.end(), "an arrow in a car's wheel bursts that tyre");
 	g_world.pop_back();
 	g_car.on = false;
+
+	// ---- a lead ----
+	// out in the open (GTA y -20), someone slim 3 m north of the player
+	g_sped.x = 0.0f;
+	g_sped.y = -20.0f;
+	for (int i = 0; i < 6; ++i)
+		frame();
+	check(std::fabs(g_walk.y - (-20.0f)) < 0.05f && std::fabs(g_mc.z - 20.0) < 0.05 && g_walk.acked,
+		"a mission's teleport of over 20 m: Minecraft's player goes there and moves on from there");
+	look(0.0f);
+	g_camPitch = g_walkCam.pitch = 0.0f;
+	g_npcs[5] = {g_walk.x, g_walk.y + 3.0f, 11.4f};
+	g_npcs[5].model = Hash(std::hash<std::string>{}("a_m_y_hipster_01"));
+	g_types[5] = 1;
+	auto npcBox = [] {
+		g_world.erase(std::remove_if(g_world.begin(), g_world.end(), [](const Box &b) { return b.entity == 5; }), g_world.end());
+		const SimNpc &q = g_npcs[5];
+		g_world.push_back({q.x - 0.3f, q.y - 0.3f, q.z - 1.0f, q.x + 0.3f, q.y + 0.3f, q.z + 0.8f, 5});
+	};
+	npcBox();
+	g_in.push_back("{\"t\":\"leashuse\",\"item\":\"lead\",\"mobs\":0}");
+	frame();
+	frame();
+	check(g_leashes.size() == 1 && g_leashes[0].a.e == 5 && g_leashes[0].b.kind == 0, "a lead put on someone: in Steve's hand");
+	check(count_out("\"t\":\"leashes\",\"l\":[[") > 0 && count_out(",0,") > 0, "Minecraft is told where the lead's ends are (held: kind 0)");
+	// walking off south: a slim person is led along
+	const float startY = g_npcs[5].y;
+	look(180.0f);
+	g_calls.clear();
+	g_pressed = {32};
+	for (int i = 0; i < 70; ++i)
+	{
+		frame();
+		npcBox();
+	}
+	g_pressed.clear();
+	const float led = startY - g_npcs[5].y;
+	std::printf("      walked %.2f m, the person came %.2f m, lead %.2f m\n", -20.0f - g_walk.y, led, g_leashes.empty() ? 0.0f : g_leashes[0].length);
+	check(led > 2.0f, "a slim person on the lead is pulled along");
+	check(std::find(g_calls.begin(), g_calls.end(), "Walk:5") != g_calls.end(), "and walks after Steve");
+	// a heavy-set one: Steve can't pull them, he's held back
+	g_npcs[5].model = Hash(std::hash<std::string>{}("a_m_m_fatlatin_01"));
+	const float heavyY = g_npcs[5].y;
+	int held = 0;
+	g_pressed = {32};
+	for (int i = 0; i < 70; ++i)
+	{
+		frame();
+		npcBox();
+		held += count_out("\"keepY\":true");
+	}
+	g_pressed.clear();
+	for (int i = 0; i < 3; ++i)
+		frame();
+	const float gap = std::fabs(g_walk.y - g_npcs[5].y);
+	std::printf("      heavy: moved %.2f m, Steve %.2f m from them, held back %d times\n", heavyY - g_npcs[5].y, gap, held);
+	check(std::fabs(heavyY - g_npcs[5].y) < 0.05f, "a heavy-set person doesn't budge");
+	check(held > 0 && gap < g_leashes[0].length + 1.6f, "and Steve is held back by them");
+	// tied to the street: aimed at the floor, with the lead in hand
+	look(0.0f);
+	g_camPitch = g_walkCam.pitch = -35.0f;
+	g_in.push_back("{\"t\":\"leashuse\",\"item\":\"lead\",\"mobs\":0}");
+	frame();
+	frame();
+	check(!g_leashes.empty() && g_leashes[0].b.kind == 2, "the lead tied to the street (a fixed spot)");
+	check(count_out("\"e\":\"tied\"") > 0 || count_out(",1,") > 0, "Minecraft is told (tied, kind 1)");
+	// shears at the person: cut
+	g_camPitch = g_walkCam.pitch = 0.0f;
+	g_in.push_back("{\"t\":\"leashuse\",\"item\":\"shears\",\"mobs\":0}");
+	frame();
+	check(g_leashes.empty() && count_out("\"e\":\"cut\"") == 1, "shears cut the lead");
+	frame();
+	check(count_out("\"t\":\"leashes\",\"l\":[]") == 1, "and Minecraft is told there are none left");
+
+	// ---- a boat ----
+	// one of Minecraft's boats where the person stands: they get in (Minecraft gives them a seat), and sit there
+	{
+		const SimNpc &q = g_npcs[5];
+		char m[300];
+		snprintf(m, sizeof(m), "{\"t\":\"boats\",\"b\":[[9,%.3f,%.3f,%.3f,0,0,0,0,2,1]],\"s\":[]}", q.x, q.z - 1.0f + g_yOffset, -q.y);
+		g_in.push_back(m);
+		frame();
+		frame();
+		check(count_out("\"t\":\"boatgrab\",\"boat\":9,\"ped\":5") == 1 || g_riders.count(5), "someone walking into a boat with room gets in");
+		snprintf(m, sizeof(m), "{\"t\":\"boats\",\"b\":[[9,%.3f,%.3f,%.3f,0,0,0,0,1,1]],\"s\":[[5,9,%.3f,%.3f,%.3f,0]]}", q.x + 2.0f, q.z - 1.0f + g_yOffset,
+			-q.y, q.x + 2.0f, q.z - 0.8f + g_yOffset, -q.y);
+		g_calls.clear();
+		g_in.push_back(m);
+		frame();
+		frame();
+		check(g_riders.count(5) && g_riders[5].seated && g_npcs[5].frozen, "Minecraft gave them the seat: sat in it");
+		check(std::find(g_calls.begin(), g_calls.end(), "Sit:5") != g_calls.end(), "sitting down");
+		std::printf("      seat x %.2f, person x %.2f\n", g_riders.count(5) ? g_riders[5].x : 0.0f, g_npcs[5].x);
+		check(g_riders.count(5) && std::fabs(g_npcs[5].x - g_riders[5].x) < 0.05f, "carried where the boat is");
+		// the boat breaks (Minecraft lists no seat): out they come
+		g_in.push_back("{\"t\":\"boats\",\"b\":[],\"s\":[]}");
+		for (int i = 0; i < 30; ++i)
+			frame();
+		check(!g_riders.count(5) && !g_npcs[5].frozen, "the boat broken: out again");
+	}
+	g_npcs.clear();
+	g_world.erase(std::remove_if(g_world.begin(), g_world.end(), [](const Box &b) { return b.entity == 5; }), g_world.end());
 	std::printf("%s\n", fails == 0 ? "ALL PASSED" : "SOME FAILED");
 	return fails != 0;
 }

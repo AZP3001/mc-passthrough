@@ -195,6 +195,7 @@ public final class WorldBridge {
 		}
 
 		MobWar.tick(s);
+		Leads.tick(s);
 		Nether.tick(s);
 		TheEnd.tick(s);
 		HostBridge.tick(s);

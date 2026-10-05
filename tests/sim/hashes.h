@@ -323,4 +323,7 @@
 #define H_GetEntityRotation 0xAFBD61CC738D9EB9ull
 #define H_SetEntityDynamic 0x1718DE8E3F2823CAull
 #define H_IsPedHuman 0xB980061DA992779Dull
+#define H_IsEntityPlayingAnim 0x1F0B79228E461EC9ull
+#define H_ClearPedTasksImmediately 0xAAA34F8A7CB32098ull
+#define H_IsThisModelABicycle 0xBF94DD42F63BDED2ull
 #define H_Notify 0x202709F4C58A0424ull

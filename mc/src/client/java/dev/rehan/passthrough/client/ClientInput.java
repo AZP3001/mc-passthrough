@@ -23,6 +23,10 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.entity.Leashable;
+import net.minecraft.world.item.Items;
+import dev.rehan.passthrough.Leads;
 import net.minecraft.world.phys.HitResult;
 import org.lwjgl.sdl.SDLVideo;
 
@@ -87,6 +91,10 @@ final class ClientInput {
 				};
 				if (k.equals("attack") && down && player != null && screen == null) {
 					swing(minecraft, player);
+				}
+
+				if (k.equals("use") && down && player != null && screen == null) {
+					leashUse(minecraft, player);
 				}
 
 				if (key != null) {
@@ -204,6 +212,27 @@ final class ClientInput {
 		Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"melee\",\"k\":\"%s\",\"s\":%.2f,\"kb\":%d,\"sh\":%d,\"fa\":%d,\"lo\":%d}",
 			kind, strength, enchantment(weapon, "knockback"), enchantment(weapon, "sharpness") + enchantment(weapon, "smite") / 2,
 			enchantment(weapon, "fire_aspect"), enchantment(weapon, "looting")));
+	}
+
+	/**
+	 * A right click with a lead or shears at the host's world (not at one of Minecraft's mobs: that's Minecraft's own
+	 * lead): the host puts a lead on, ties, takes back or cuts what the crosshair is on. It's told how many of Minecraft's
+	 * own mobs are on leads in Steve's hand (they get tied there too).
+	 */
+	private static void leashUse(final Minecraft minecraft, final LocalPlayer player) {
+		ItemStack held = player.getMainHandItem();
+		String item = held.is(Items.LEAD) ? "lead" : held.is(Items.SHEARS) ? "shears" : null;
+		if (item == null || HostState.frame() == null
+			|| minecraft.hitResult instanceof EntityHitResult on && !Leads.isProxy(on.getEntity())) {
+			return;
+		}
+
+		int mobs = 0;
+		for (Leashable l : Leashable.leashableLeashedTo(player)) {
+			mobs += Leads.isProxy((net.minecraft.world.entity.Entity) l) ? 0 : 1;
+		}
+
+		Passthrough.events.accept("{\"t\":\"leashuse\",\"item\":\"" + item + "\",\"mobs\":" + mobs + "}");
 	}
 
 	/** The level of an enchantment (by its id's path: "sharpness") on an item, or 0. */
