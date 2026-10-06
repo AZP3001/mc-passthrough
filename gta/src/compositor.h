@@ -40,6 +40,9 @@ namespace compositor
 	/// car_far: seated, how far the car's own body reaches from the camera (only that close does it let him show through).
 	void set_steve(float x0, float y0, float x1, float y1, float near_d, float far_d, float glass_d, double x, double y, double z,
 		float height, bool seated, float car_far = 0.0f);
+	/// Glass in front of Steve: box, the screen box (0..1) of a 5 x 8 grid over him; cells (row by row from the top), the
+	/// distance along the camera of the glass a line to him meets first in that cell (0: none, or something solid first).
+	void set_steve_glass(const float box[4], const float cells[40]);
 	/// GTA's backbuffer size as ReShade sees it (0 until the first frame).
 	void backbuffer_size(int &width, int &height);
 }

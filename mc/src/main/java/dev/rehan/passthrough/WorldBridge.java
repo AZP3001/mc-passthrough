@@ -16,6 +16,8 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -444,6 +446,9 @@ public final class WorldBridge {
 				level.broadcastEntityEvent(e, (byte) 17);
 				e.discard();
 			} else if (e instanceof AbstractArrow arrow) {
+				// Minecraft's own hit sound where it landed (a wall, the ground, a person, a car)
+				level.playSound(null, x, y, z, !stick && arrow instanceof ThrownTrident ? SoundEvents.TRIDENT_HIT : ((AbstractArrowAccessor) arrow).passthrough$hitSound(),
+					SoundSource.NEUTRAL, 1.0F, 1.2F / (level.getRandom().nextFloat() * 0.2F + 0.9F));
 				if (stick) {
 					// stuck in the host's wall or ground: in the ground on both sides (only moved there and left floating,
 					// the client's copy flew on and fell, and the two fought over where it was: it jittered about)

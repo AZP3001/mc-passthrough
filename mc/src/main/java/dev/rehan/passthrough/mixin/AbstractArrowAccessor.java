@@ -1,5 +1,6 @@
 package dev.rehan.passthrough.mixin;
 
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.level.block.state.BlockState;
 import org.spongepowered.asm.mixin.Mixin;
@@ -14,6 +15,9 @@ public interface AbstractArrowAccessor {
 
 	@Invoker("isInGround")
 	boolean passthrough$isInGround();
+
+	@Invoker("getHitGroundSoundEvent")
+	SoundEvent passthrough$hitSound();
 
 	@Accessor("lastState")
 	void passthrough$setLastState(BlockState state);

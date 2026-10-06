@@ -30,9 +30,9 @@ abstract class AvatarRendererMixin {
 			return;
 		}
 
-		// drawn as tall as the host's character (Minecraft's Steve is 1.875 m). (First person: he isn't drawn at all; the
-		// inventory's little Steve is this same player, and must keep his head)
-		SteveRig.setLocal(state, p.height() / 1.875F);
+		// drawn 70% as tall as the host's character (Minecraft's Steve is 1.875 m; his hitbox stays). (First person: he
+		// isn't drawn at all; the inventory's little Steve is this same player, and must keep his head)
+		SteveRig.setLocal(state, p.height() / 1.875F * 0.7F);
 
 		// (not while a screen that draws Steve itself is open, the inventory: its little Steve would take the pose too)
 		SteveRig.Pose rig = p.rig() != null && p.rig().length >= 24 && !p.walk() && !p.drive()

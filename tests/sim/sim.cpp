@@ -558,6 +558,7 @@ namespace compositor
 	void set_host_pose(float, float, float, float, double, double, double) {}
 	void set_pose_lag(int) {}
 	void set_steve(float, float, float, float, float, float, float, double, double, double, float, bool, float) {}
+	void set_steve_glass(const float *, const float *) {}
 	void set_camera_locked(bool) {}
 	void set_look(float, float, float) {}
 	void set_screen_fx(float, float, float, float) {}

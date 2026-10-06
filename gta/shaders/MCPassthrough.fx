@@ -93,7 +93,10 @@ uniform float3 WarpT = float3(0.0, 0.0, 0.0);
 uniform float3 SteveT = float3(0.0, 0.0, 0.0);
 uniform float4 SteveBox = float4(0.0, 0.0, 0.0, 0.0);
 uniform float3 SteveDepth = float3(0.0, 0.0, 0.0);
-uniform float SteveCarFar = 0.0; // seated: how far from the camera the car's own body reaches
+// Set by the add-on: glass in front of Steve, as a 5 x 8 grid over him (its screen box; per cell, row by row from the
+// top, the distance along the camera of the glass a line to him meets first there, 0: none, or something solid first).
+uniform float4 SteveGlassBox = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 SteveGlass[10];
 // Set by the add-on: Steve's feet where Minecraft drew him, in the camera it drew him with (xyz; w: his height, 0 none), and
 // world up in that camera (xyz; w: 1 when he sits in a car).
 uniform float4 SteveMc = float4(0.0, 0.0, 0.0, 0.0);
@@ -407,15 +410,23 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 		return;
 	}
 
-	// Steve: a little more depth allowance (his blocky shape is wider than GTA's character, in a car's seat too), and
-	// glass in front of him (a car's window, a shop's) doesn't hide him
+	// Steve: a little depth allowance (his blocky shape is wider than GTA's character), none more at GTA's edges (he
+	// showed through cars and walls), and glass in front of him (a car's window, a shop's) doesn't hide him: only where a
+	// line to him met that glass first, and only the glass itself
 	const bool steve = steveH >= 0.0;
-	// glass in front of him (a shop's window); and in a car's seat, above his waist, whatever of the car is close in front
-	// of him (its windows, an open door's glass, the pillars): the car's own people show there too
-	const bool glass = steve && zm > zh && ((SteveDepth.z > 0.0 && abs(zh - SteveDepth.z) < 0.6) ||
-		(SteveUp.w > 0.5 && steveH > SteveMc.w * 0.42 && zm - zh < 1.4 && zh < SteveCarFar)); // (the car's own windows and
-		// pillars, not a wall or another car close in front of it)
-	const float visible = zm < zh + (steve ? max(allow, SteveBias) : allow) || glass ? 1.0 : 0.0;
+	float glassAt = 0.0;
+	if (steve && SteveGlassBox.z > SteveGlassBox.x && SteveGlassBox.w > SteveGlassBox.y)
+	{
+		const float2 g = (uv - SteveGlassBox.xy) / (SteveGlassBox.zw - SteveGlassBox.xy);
+		if (all(g >= 0.0) && all(g < 1.0))
+		{
+			const int i = int(g.y * 8.0) * 5 + int(g.x * 5.0);
+			const int k = i % 4;
+			glassAt = dot(SteveGlass[i / 4], float4(k == 0, k == 1, k == 2, k == 3));
+		}
+	}
+	const bool glass = steve && zm > zh && glassAt > 0.0 && abs(zh - glassAt) < 0.4;
+	const float visible = zm < zh + (steve ? SteveBias : allow) || glass ? 1.0 : 0.0;
 	const float cover = world.a * visible;
 	// (relit as straight colour, then put back over GTA's by its coverage)
 	const float3 albedo = world.a > 1e-3 ? world.rgb / world.a : 0.0;

@@ -53,6 +53,7 @@ namespace
 	{
 		float box[4] = {0, 0, 0, 0}, depth[3] = {0, 0, 0};
 		float carFar = 0.0f;
+		float glassBox[4] = {0, 0, 0, 0}, glass[40] = {};
 		double pos[3] = {0, 0, 0};
 		float height = 1.8f;
 		bool seated = false;
@@ -394,8 +395,15 @@ namespace
 		}
 		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveDepth"); v.handle != 0)
 			runtime->set_uniform_value_float(v, steve.depth[0], steve.depth[1], steve.depth[2]);
-		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveCarFar"); v.handle != 0)
-			runtime->set_uniform_value_float(v, steve.valid && steve.seated ? steve.carFar : 0.0f);
+		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveGlassBox"); v.handle != 0)
+		{
+			if (steve.valid)
+				runtime->set_uniform_value_float(v, steve.glassBox[0], steve.glassBox[1], steve.glassBox[2], steve.glassBox[3]);
+			else
+				runtime->set_uniform_value_float(v, 0.0f, 0.0f, 0.0f, 0.0f);
+		}
+		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveGlass"); v.handle != 0)
+			runtime->set_uniform_value_float(v, steve.glass, 40);
 		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveLit"); v.handle != 0)
 			runtime->set_uniform_value_float(v, g_cutscene.load() ? 1.0f : 0.0f);
 		// where Minecraft drew Steve, in the camera it drew him with (his feet, and up): only his own pixels take his
@@ -545,6 +553,13 @@ namespace compositor
 		g_steve.pos[1] = y;
 		g_steve.pos[2] = z;
 		g_steve.valid = x1 > x0;
+	}
+
+	void set_steve_glass(const float box[4], const float cells[40])
+	{
+		std::lock_guard<std::mutex> lock(g_poseLock);
+		std::copy(box, box + 4, g_steve.glassBox);
+		std::copy(cells, cells + 40, g_steve.glass);
 	}
 
 	void set_cutscene(bool on)

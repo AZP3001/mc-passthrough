@@ -286,5 +286,10 @@ public final class PlayerSync {
 		player.zo = player.zOld = z;
 		Vec3 v = player.getDeltaMovement();
 		player.setDeltaMovement(0.0, keepY ? v.y : 0.0, 0.0);
+		if (!keepY) {
+			// (out of the void, the host's respawn: what it fell before isn't a fall)
+			player.resetFallDistance();
+			Passthrough.psetAt = System.currentTimeMillis();
+		}
 	}
 }

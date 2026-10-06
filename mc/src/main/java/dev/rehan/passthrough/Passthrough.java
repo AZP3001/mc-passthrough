@@ -35,6 +35,8 @@ public class Passthrough implements ModInitializer {
 	public static volatile boolean active;
 	/** True while Minecraft moves the player (on foot) and the host's player follows it; false while the host moves it. */
 	public static volatile boolean walking;
+	/** When the host last put the player somewhere new (a "pset" across and up or down, ms): the fall before it isn't one. */
+	public static volatile long psetAt;
 	/** /fly: Minecraft's movement flies (Space up, Ctrl down), and a car flies with Space twice; off: neither. */
 	public static volatile boolean flyAllowed;
 	/** The player's tag for /fly on (kept with the player, so a restart keeps it). */

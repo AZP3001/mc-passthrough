@@ -49,11 +49,19 @@ abstract class PlayerMixin {
 	 * A fall hurts though the player may fly (/fly or creative gives it that): Minecraft spares anyone who may fly,
 	 * so a fall never hurt here, and a parachute or a water bucket was never needed. Flying itself never falls.
 	 */
-	@Inject(method = "causeFallDamage", at = @At("HEAD"))
+	@Inject(method = "causeFallDamage", at = @At("HEAD"), cancellable = true)
 	private void passthrough$fallHurts(final double fallDistance, final float damageModifier, final DamageSource source,
 		final CallbackInfoReturnable<Boolean> cir) {
 		Player self = (Player) (Object) this;
 		this.passthrough$mayflyWas = self.getAbilities().mayfly;
+		// just put somewhere new by the host (out of the void, a respawn): no fall (a void's worth of one killed the
+		// player as it spawned)
+		if (Passthrough.active && System.currentTimeMillis() - Passthrough.psetAt < 1500L) {
+			self.resetFallDistance();
+			cir.setReturnValue(false);
+			return;
+		}
+
 		if (Passthrough.active && !self.isSpectator() && !self.getAbilities().flying) {
 			self.getAbilities().mayfly = false;
 		}

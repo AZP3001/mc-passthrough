@@ -112,6 +112,14 @@ async def main():
         hurt = sum(j.get("d", 0) for j in inbox if j.get("t") == "pdmg")
         check(hurt < 0.5, f"the void doesn't hurt ({hurt:.1f})")
         check(not any(j.get("t") == "dead" or j.get("t") == "died" for j in inbox), "nor kill")
+        # falling, then put on the host's ground (a respawn, the host's world loading in under the player): the fall
+        # before doesn't count (it killed the player as it spawned)
+        await drop(60.5, 140.0, 0.5)
+        await asyncio.sleep(2.2)
+        await drop(0.5, 63.2, 0.5)
+        await asyncio.sleep(2.0)
+        hurt = sum(j.get("d", 0) for j in inbox if j.get("t") == "pdmg")
+        check(hurt < 0.5, f"falling, then put on the ground: no fall ({hurt:.1f})")
 
         # 4. creative (the mod's own world is creative): a fall hurts all the same, and a zombie hunts the player
         await cmd("gamemode creative @a")

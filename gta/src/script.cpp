@@ -2902,7 +2902,21 @@ namespace
 	void water_tick(Ped player)
 	{
 		const int now = natives::GetGameTimer();
-		if (g_water.empty() || now < g_nextWaterAt)
+		if (g_water.empty())
+			return;
+		// the player (moved by GTA, not Minecraft: Minecraft's own water carries Steve) in flowing water: carried along,
+		// as Minecraft's water carries Steve
+		if (!g_walk.on && !g_carFly.on && !natives::IsPedInAnyVehicle(player, FALSE) && !natives::IsPedRagdoll(player))
+		{
+			const Vector3 o = natives::GetEntityCoords(player, TRUE);
+			float fx = 0.0f, fy = 0.0f;
+			if (water_at(o.x, o.y, o.z - 1.0f, fx, fy) && fx * fx + fy * fy >= 0.01f)
+			{
+				const float step = 1.4f * natives::GetFrameTime() / std::sqrt(fx * fx + fy * fy);
+				natives::SetEntityCoordsNoOffset(player, o.x + fx * step, o.y + fy * step, o.z);
+			}
+		}
+		if (now < g_nextWaterAt)
 			return;
 		g_nextWaterAt = now + 250;
 		const Vector3 me = natives::GetEntityCoords(player, TRUE);
@@ -2978,6 +2992,25 @@ namespace
 			const float len = std::sqrt(fx * fx + fy * fy);
 			if (len > 0.1f)
 				natives::ApplyForceToEntity(handles[i], fx / len * 9.0f, fy / len * 9.0f, 0.3f);
+		}
+		// GTA's loose things (bins, cones, boxes, what was knocked over) carried along too, as Minecraft's items are
+		const int objs = worldGetAllObjects(handles, 256);
+		for (int i = 0; i < objs; ++i)
+		{
+			const Object ob = handles[i];
+			// (not Minecraft's blocks, Steve's gun, what anyone carries, or a mission's own)
+			if (g_props.handles.count(ob) || ob == g_gunFit.held || natives::IsEntityAttached(ob) ||
+				(natives::IsEntityAMissionEntity(ob) && !is_loose(ob)))
+				continue;
+			const Vector3 o = natives::GetEntityCoords(ob, TRUE);
+			if ((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) > 80.0f * 80.0f)
+				continue;
+			float fx = 0.0f, fy = 0.0f;
+			if (!water_at(o.x, o.y, o.z, fx, fy) && !water_at(o.x, o.y, o.z + 0.5f, fx, fy))
+				continue;
+			const float len = std::sqrt(fx * fx + fy * fy);
+			if (len > 0.1f)
+				natives::ApplyForceToEntity(ob, fx / len * 3.0f, fy / len * 3.0f, 0.2f);
 		}
 	}
 
@@ -8235,34 +8268,38 @@ namespace
 		}
 		if (behind)
 			x0 = y0 = 0.0f, x1 = y1 = 1.0f; // around the camera (first person): all of the screen
-		// glass on the line from the camera to his chest
-		float glass = 0.0f;
+		// glass in front of him, cell by cell (a 5 x 8 grid on a plane through him, square to the camera: its picture is
+		// a box on screen): lines from the camera to him, and where the first thing one meets is glass (a car's window, a
+		// shop's), he shows through that glass there. Anything else in front (a wall, a car's body, a pillar) hides him.
 		{
-			BOOL hit = FALSE;
-			Vector3 end = {}, normal = {};
-			Entity entity = 0;
-			Hash material = 0;
-			const float tz = sz + ht * 0.55f;
-			const int probe = natives::StartShapeTestLosProbe(c.x, c.y, c.z, sx, sy, tz, kGlassFlags, ped, kSeeGlass);
-			if (natives::GetShapeTestResultIncludingMaterial(probe, &hit, &end, &normal, &material, &entity) == 2 && hit && breakable_glass(material))
-				glass = (end.x - c.x) * fx + (end.y - c.y) * fy + (end.z - c.z) * fz;
-		}
-		// seated: how far from the camera the car's own body reaches (its windows and pillars let him show; what's beyond
-		// it, a wall or another car close in front, doesn't)
-		float carFar = 0.0f;
-		if (seated && natives::IsPedInAnyVehicle(ped, FALSE))
-		{
-			const Vehicle v = natives::GetVehiclePedIsIn(ped, FALSE);
-			Vector3 mn = {}, mx = {};
-			natives::GetModelDimensions(natives::GetEntityModel(v), &mn, &mx);
-			for (int i = 0; i < 8; ++i)
+			const float rx = std::cos(r.z * d2r), ry = std::sin(r.z * d2r); // (the camera's right)
+			const float ux = ry * fz, uy = -rx * fz, uz = rx * fy - ry * fx; // (its up: right x forward)
+			const float mx = sx, my = sy, mz = sz + ht * 0.5f, hw = 0.6f, hh = ht * 0.5f + 0.2f;
+			float gbox[4] = {0, 0, 0, 0}, cells[40] = {};
+			if (!behind && natives::GetScreenCoordFromWorldCoord(mx - rx * hw + ux * hh, my - ry * hw + uy * hh, mz + uz * hh, &gbox[0], &gbox[1]) &&
+				natives::GetScreenCoordFromWorldCoord(mx + rx * hw - ux * hh, my + ry * hw - uy * hh, mz - uz * hh, &gbox[2], &gbox[3]))
 			{
-				const Vector3 q = natives::GetOffsetFromEntityInWorldCoords(v, (i & 1) ? mx.x : mn.x, (i & 2) ? mx.y : mn.y, (i & 4) ? mx.z : mn.z);
-				carFar = std::max(carFar, (q.x - c.x) * fx + (q.y - c.y) * fy + (q.z - c.z) * fz + 0.1f);
+				for (int j = 0; j < 8; ++j)
+					for (int i = 0; i < 5; ++i)
+					{
+						const float a = -hw + (i + 0.5f) * (2.0f * hw / 5.0f), b = hh - (j + 0.5f) * (2.0f * hh / 8.0f);
+						BOOL hit = FALSE;
+						Vector3 end = {}, normal = {};
+						Entity entity = 0;
+						Hash material = 0;
+						const int probe = natives::StartShapeTestLosProbe(c.x, c.y, c.z, mx + rx * a + ux * b, my + ry * a + uy * b, mz + uz * b,
+							kGlassFlags, ped, kSeeGlass);
+						if (natives::GetShapeTestResultIncludingMaterial(probe, &hit, &end, &normal, &material, &entity) == 2 && hit &&
+							breakable_glass(material))
+							cells[j * 5 + i] = (end.x - c.x) * fx + (end.y - c.y) * fy + (end.z - c.z) * fz;
+					}
 			}
+			else
+				gbox[0] = gbox[1] = gbox[2] = gbox[3] = 0.0f;
+			compositor::set_steve_glass(gbox, cells);
 		}
 		compositor::set_steve(std::max(0.0f, x0 - 0.02f), std::max(0.0f, y0 - 0.02f), std::min(1.0f, x1 + 0.02f), std::min(1.0f, y1 + 0.02f),
-			std::max(0.0f, dn), df, glass, sx, sz + g_yOffset, -sy, ht, seated, carFar);
+			std::max(0.0f, dn), df, 0.0f, sx, sz + g_yOffset, -sy, ht, seated);
 	}
 
 	bool rig_pose(Ped who, bool seated, Rig &out)

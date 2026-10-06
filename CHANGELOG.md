@@ -1,5 +1,19 @@
 # Changelog
 
+## Water push, smaller Steve, spawn fix (2026-10-06)
+
+Tested in the GTA simulator (all checks) and in Minecraft (`fall_test.py` with a new spawn check, `features_test.py`,
+`water_test.py`, all passing). Not yet tried in real GTA.
+
+| Change | Now |
+|---|---|
+| Instant death on spawn | A fall in progress when GTA put you somewhere new (a respawn, the world loading in under you) counted when you landed (74 damage in the test). A host teleport now clears the fall, and a landing within 1.5 s of one doesn't hurt |
+| Water pushes | Flowing Minecraft water carries you (GTA's movement; Minecraft's movement already was) and GTA's loose objects (bins, cones, boxes), as well as people and cars |
+| Steve 30% smaller | Drawn at 70% of the GTA character's height. The hitbox is unchanged |
+| Arrows half size | Drawn at half size. The hitbox is unchanged |
+| Steve seen through things | Steve no longer gets the extra depth allowance at GTA's edges, and the "in a car, the car's pillars let him show" rule is gone. Glass is now checked per cell (a 5 x 8 grid of lines from the camera to him): he shows through a car's or shop's window only where the first thing a line meets is glass, and only on that glass |
+| Arrow hit sound | Arrows and tridents landing in GTA's world (walls, ground, people, cars) play Minecraft's hit sound |
+
 ## Round 2: falls, mobs, leads, missions (2026-10-06)
 
 Tested in the GTA simulator (`tests/sim`, all checks) and in Minecraft (`tests/*_test.py`, `walktest.py`,
