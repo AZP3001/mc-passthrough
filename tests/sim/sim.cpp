@@ -306,8 +306,10 @@ PUINT64 nativeCall()
 		g_renderingCam = I(0) ? 77 : -1;
 	else if (npc == g_npcs.end() && h == H_GetEntityModel && g_types.count(I(0)) && g_types[I(0)] == 3)
 		retI(0x5151); // (one of GTA's things)
-	else if (g_propsLoad && (h == H_IsModelValid || h == H_HasModelLoaded))
+	else if (g_propsLoad && (h == H_IsModelValid || h == H_HasModelLoaded || h == H_IsModelInCdimage))
 		retI(1);
+	else if (h == H_CreatePed)
+		g_calls.push_back("CreatePed:" + std::to_string(I(0)));
 	else if (g_propsLoad && h == H_CreateObjectNoOffset)
 	{
 		static int next = 8000;
@@ -1087,6 +1089,18 @@ int main()
 		snprintf(m, sizeof(m), "{\"t\":\"blocks\",\"clear\":[%d,%d,%d]}", std::get<0>(key), std::get<1>(key), std::get<2>(key));
 		g_in.push_back(m);
 		frame();
+		g_propsLoad = false;
+	}
+
+	// GTA's animals summon as animals (GTA's ped type 28), all of them by model name, and a random one as "animal"
+	{
+		g_propsLoad = true; // (any model loads)
+		g_calls.clear();
+		g_in.push_back("{\"t\":\"gtacmd\",\"c\":\"summon\",\"what\":\"a_c_deer\"}");
+		g_in.push_back("{\"t\":\"gtacmd\",\"c\":\"summon\",\"what\":\"animal\"}");
+		frame();
+		frame();
+		check(std::count(g_calls.begin(), g_calls.end(), std::string("CreatePed:28")) == 2, "/summon a_c_deer and /summon animal: GTA animals");
 		g_propsLoad = false;
 	}
 

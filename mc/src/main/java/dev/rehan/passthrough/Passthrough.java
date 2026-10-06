@@ -119,11 +119,18 @@ public class Passthrough implements ModInitializer {
 				context.getSource().getPlayerOrException().setGameMode(GameType.CREATIVE);
 				return 1;
 			}));
-			// GTA's things: /summon car, truck, tank, plane, heli, boat, bike, npc, cop, or any GTA model name (Minecraft's
-			// own mobs still summon as ever)
+			// GTA's things: /summon car, truck, tank, plane, heli, boat, bike, npc, cop, animal, or any GTA model name (all of
+			// GTA's animals are listed; Minecraft's own mobs still summon as ever)
 			dispatcher.register(Commands.literal("summon").then(Commands.argument("gta", StringArgumentType.word())
 				.suggests((context, builder) -> {
-					for (String k : new String[] {"car", "truck", "tank", "plane", "jet", "heli", "boat", "bike", "bus", "police", "npc", "cop", "soldier"}) {
+					for (String k : new String[] {"car", "truck", "tank", "plane", "jet", "heli", "boat", "bike", "bus", "police", "npc", "cop", "soldier",
+						"animal",
+						"a_c_boar", "a_c_cat_01", "a_c_chickenhawk", "a_c_chimp", "a_c_chop", "a_c_cormorant",
+						"a_c_cow", "a_c_coyote", "a_c_crow", "a_c_deer", "a_c_dolphin", "a_c_fish", "a_c_hen",
+						"a_c_humpback", "a_c_husky", "a_c_killerwhale", "a_c_mtlion", "a_c_panther", "a_c_pig",
+						"a_c_pigeon", "a_c_poodle", "a_c_pug", "a_c_rabbit_01", "a_c_rat", "a_c_retriever",
+						"a_c_rhesus", "a_c_rottweiler", "a_c_seagull", "a_c_sharkhammer", "a_c_sharktiger",
+						"a_c_shepherd", "a_c_stingray", "a_c_westy"}) {
 						if (k.startsWith(builder.getRemainingLowerCase())) {
 							builder.suggest(k);
 						}
@@ -143,7 +150,7 @@ public class Passthrough implements ModInitializer {
 				.suggests((context, builder) -> {
 					String typed = builder.getRemainingLowerCase();
 					String[] all = {"spawn car", "spawn truck", "spawn tank", "spawn plane", "spawn jet", "spawn heli", "spawn boat", "spawn bike",
-						"spawn bus", "spawn police", "spawn npc", "spawn cop", "spawn soldier", "superjump", "fastrun", "fastswim", "explosiveammo",
+						"spawn bus", "spawn police", "spawn npc", "spawn cop", "spawn soldier", "spawn animal", "superjump", "fastrun", "fastswim", "explosiveammo",
 						"fireammo", "explosivemelee", "slidey", "moon", "slowmo", "infiniteammo", "neverwanted", "onehit", "drunk", "wanted",
 						"heal", "armor", "weapons", "traffic 0", "traffic 1", "traffic 3", "crowds 0", "crowds 3", "blackout", "freezetime", "clear",
 						"flip", "fix", "boost", "sethome", "home", "tp", "skyfall", "ragdoll", "help"};

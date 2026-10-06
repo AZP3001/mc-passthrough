@@ -16,6 +16,7 @@ Tested in the GTA simulator (all checks, new ones for each row marked *) and in 
 | Lava on cars* | Only the tyres in the lava pop (it popped them all). The car dents where the lava touches it, at body height, so it shows. It's pushed out harder, and through if it sits in lava all over |
 | Water push* | Cars and loose objects are eased toward the water's pace every frame (they were shoved four times a second and lurched). You're only carried while on your feet, so jumps and falls aren't cancelled |
 | Built blocks far off* | Blocks get GTA collision up to 100 m away (was 30 m), and blocks buried on all sides get none, so the 400-prop budget reaches further. GTA's own cars far from you may still drive through: GTA runs distant traffic without physics |
+| GTA's animals in `/summon` | All of GTA's animals (`a_c_deer`, `a_c_mtlion`, `a_c_sharktiger`, ...) are listed as you type `/summon`, plus `animal` for a random land one (`/gta spawn animal 5` too). They spawn as GTA animals, not as people with an animal's model |
 | GTA water | Minecraft movement's "in GTA's water" checks know rivers now. The log (`MCPassthrough.log`) notes GTA's water sent to Minecraft, arrow splashes, riptides, and going in and out of water, to find why swimming and riptide fail in real GTA |
 
 ## Water push, smaller Steve, spawn fix (2026-10-06)

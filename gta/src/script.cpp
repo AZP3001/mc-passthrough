@@ -2040,6 +2040,8 @@ namespace
 		std::string m = model;
 		for (char &ch : m)
 			ch = char(std::tolower(static_cast<unsigned char>(ch)));
+		if (m.rfind("a_c_", 0) == 0)
+			return 28; // an animal
 		for (const char *cop : {"s_m_y_cop", "s_f_y_cop", "s_m_y_sheriff", "s_f_y_sheriff", "s_m_y_hwaycop", "s_m_m_snowcop", "s_m_y_ranger",
 				 "s_f_y_ranger", "csb_cop", "s_m_m_ciasec", "s_m_m_fibsec", "s_m_y_swat"})
 			if (m.rfind(cop, 0) == 0)
@@ -6739,7 +6741,7 @@ namespace
 		}
 		else
 		{
-			natives::Notify("~y~/gta~s~ spawn <car|truck|tank|plane|heli|boat|bike|npc|cop|model>, superjump, fastrun, fastswim, explosiveammo, "
+			natives::Notify("~y~/gta~s~ spawn <car|truck|tank|plane|heli|boat|bike|npc|cop|animal|model>, superjump, fastrun, fastswim, explosiveammo, "
 							"fireammo, explosivemelee, slidey, moon, slowmo, infiniteammo, neverwanted, onehit, drunk, wanted 0-5, heal, armor, weapons");
 			natives::Notify("~y~/gta~s~ traffic 0-3, crowds 0-3, blackout, freezetime, clear, flip, fix, boost, sethome, home, tp x y [z], skyfall, ragdoll");
 		}
@@ -6890,6 +6892,8 @@ namespace
 			{"person", {"a_m_y_hipster_01", "a_f_y_hipster_01", "a_m_m_business_01", "a_f_y_business_01"}},
 			{"cop", {"s_m_y_cop_01", "s_f_y_cop_01"}},
 			{"soldier", {"s_m_y_marine_01", "s_m_y_marine_03"}},
+			{"animal", {"a_c_deer", "a_c_boar", "a_c_cow", "a_c_pig", "a_c_coyote", "a_c_mtlion", "a_c_husky", "a_c_retriever", "a_c_cat_01",
+						   "a_c_rabbit_01", "a_c_hen", "a_c_chimp", "a_c_rhesus", "a_c_pigeon", "a_c_seagull", "a_c_crow"}},
 		};
 		std::string model = what;
 		if (const auto it = kinds.find(what); it != kinds.end())
@@ -6897,7 +6901,7 @@ namespace
 		const Hash h = natives::GetHashKey(model.c_str());
 		if (model.empty() || !natives::IsModelInCdimage(h) || !natives::IsModelValid(h))
 		{
-			natives::Notify(("GTA has no ~r~" + what + "~s~ (try car, truck, tank, plane, heli, boat, bike, npc, cop or a model name)").c_str());
+			natives::Notify(("GTA has no ~r~" + what + "~s~ (try car, truck, tank, plane, heli, boat, bike, npc, cop, animal or a model name)").c_str());
 			return;
 		}
 		natives::RequestModel(h);
