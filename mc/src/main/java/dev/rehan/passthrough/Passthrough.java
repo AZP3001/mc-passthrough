@@ -75,6 +75,8 @@ public class Passthrough implements ModInitializer {
 	public static volatile double @org.jspecify.annotations.Nullable [] hostHit;
 	/** The host's player's health in Minecraft's hearts (0..20), or -1: Minecraft's player's health follows it. */
 	public static volatile float hostHealth = -1.0F;
+	/** The host's breath under its water (0..1) while it moves the player: Minecraft's air shows it; -1: Minecraft's own. */
+	public static volatile float hostAir = -1.0F;
 	/** Where events for the host go (JSON lines); the client's HostLink sets it. */
 	public static volatile Consumer<String> events = message -> {};
 

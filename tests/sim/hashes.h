@@ -250,6 +250,13 @@
 #define H_GetMissionFlag 0xA33CDCCDA663159Eull
 #define H_UpdateOnscreenKeyboard 0x0CF2B696BBF945AEull
 #define H_CanPhoneBeSeenOnScreen 0xC4E2813898C97A4Bull
+#define H_DoesVehicleHaveWeapons 0x25ECB9F8017D98E0ull
+#define H_GetPlayerUnderwaterTimeRemaining 0xA1FCF8E6AF40B731ull
+#define H_IsPedSwimmingUnderWater 0xC024869A53992F34ull
+#define H_GetPedSourceOfDeath 0x93C8B64DEB84728Cull
+#define H_IsPedInCover 0x60DFD0691A170B88ull
+#define H_GetRenderingCam 0x5234F9F10919EABAull
+#define H_IsEntityInWater 0xCFB0A0D8EDD145A3ull
 #define H_SetControlValueNextFrame 0xE8A25867FBA3B05Eull
 #define H_GetBestPedWeapon 0x8483E98E8B888AE2ull
 #define H_IsEntityDead 0x5F9532F3B5CC2551ull
@@ -278,7 +285,6 @@
 #define H_IsPlayerControlOn 0x49C32D60007AFA47ull
 #define H_IsPedGettingIntoAVehicle 0xBB062B2B5722478Eull
 #define H_IsPedGettingUp 0x2A74E1D5F2F00EECull
-#define H_IsPedInCover 0x60DFD0691A170B88ull
 #define H_GetPedParachuteState 0x79CFD9827CC979B6ull
 #define H_GetIsTaskActive 0xB0760331C7AA4155ull
 #define H_TaskClimb 0x89D9FCC2435112F1ull

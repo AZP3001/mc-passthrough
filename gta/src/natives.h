@@ -306,6 +306,13 @@ namespace natives
 	inline BOOL GetMissionFlag() { return invoke<BOOL>(0xA33CDCCDA663159E); }
 	inline int UpdateOnscreenKeyboard() { return invoke<int>(0x0CF2B696BBF945AE); }
 	inline BOOL CanPhoneBeSeenOnScreen() { return invoke<BOOL>(0xC4E2813898C97A4B); }
+	// Story-mode stability and crossovers (vehicle weapons, breath, splashes, kills).
+	inline BOOL DoesVehicleHaveWeapons(Vehicle v) { return invoke<BOOL>(0x25ECB9F8017D98E0, v); }
+	inline float GetPlayerUnderwaterTimeRemaining(Player p) { return invoke<float>(0xA1FCF8E6AF40B731, p); }
+	inline BOOL IsPedSwimmingUnderWater(Ped p) { return invoke<BOOL>(0xC024869A53992F34, p); }
+	inline BOOL IsPedInCover(Ped p) { return invoke<BOOL>(0x60DFD0691A170B88, p, FALSE); }
+	inline int GetRenderingCam() { return invoke<int>(0x5234F9F10919EABA); }
+	inline BOOL IsEntityInWater(Entity e) { return invoke<BOOL>(0xCFB0A0D8EDD145A3, e); }
 	inline BOOL SetControlValueNextFrame(int pad, int control, float value) { return invoke<BOOL>(0xE8A25867FBA3B05E, pad, control, value); }
 	inline Hash GetBestPedWeapon(Ped p) { return invoke<Hash>(0x8483E98E8B888AE2, p, FALSE); }
 	inline BOOL IsEntityDead(Entity e) { return invoke<BOOL>(0x5F9532F3B5CC2551, e, FALSE); }
@@ -340,7 +347,6 @@ namespace natives
 	inline BOOL IsPlayerControlOn(Player p) { return invoke<BOOL>(0x49C32D60007AFA47, p); }
 	inline BOOL IsPedGettingIntoAVehicle(Ped p) { return invoke<BOOL>(0xBB062B2B5722478E, p); }
 	inline BOOL IsPedGettingUp(Ped p) { return invoke<BOOL>(0x2A74E1D5F2F00EEC, p); }
-	inline BOOL IsPedInCover(Ped p) { return invoke<BOOL>(0x60DFD0691A170B88, p, FALSE); }
 	inline int GetPedParachuteState(Ped p) { return invoke<int>(0x79CFD9827CC979B6, p); }
 	inline BOOL GetIsTaskActive(Ped p, int task) { return invoke<BOOL>(0xB0760331C7AA4155, p, task); }
 	inline void TaskClimb(Ped p) { invoke<Void>(0x89D9FCC2435112F1, p, TRUE); }

@@ -198,6 +198,19 @@ public final class WorldBridge {
 	/** Arrows the host already hit something with (they stay where they hit and aren't reported again). */
 	private static final String HIT_TAG = "passthrough_hit";
 
+	/**
+	 * Minecraft's player killed one of the host's people or animals (a swing, an arrow, a trident): experience orbs
+	 * where they fell, as a mob's would drop. Any thread.
+	 */
+	public static void experience(final double x, final double y, final double z, final int amount) {
+		MinecraftServer s = server;
+		if (s == null || amount <= 0) {
+			return;
+		}
+
+		s.execute(() -> net.minecraft.world.entity.ExperienceOrb.award(s.overworld(), new Vec3(x, y + 0.5, z), Math.min(amount, 100)));
+	}
+
 	/** The host's map waypoint (Minecraft coordinates), where compasses point, or null. Any thread. */
 	private static volatile BlockPos waypoint;
 
@@ -298,7 +311,14 @@ public final class WorldBridge {
 	private static String projectileKind(final Entity e) {
 		boolean moving = e.getDeltaMovement().lengthSqr() > 1.0E-4;
 		if (e instanceof ThrownTrident trident) {
-			return trident.entityTags().contains(HIT_TAG) || !moving ? null : channeling(trident.getWeaponItem()) ? "trident:chan" : "trident";
+			if (trident.entityTags().contains(HIT_TAG) || !moving) {
+				return null;
+			}
+
+			// channeling (lightning where it lands), impaling (harder on what's in water or rain)
+			ItemStack weapon = trident.getWeaponItem();
+			int impaling = weapon == null ? 0 : enchantment(weapon, "impaling");
+			return "trident" + (channeling(weapon) ? ":chan" : "") + (impaling > 0 ? ":im" + impaling : "");
 		} else if (e instanceof AbstractArrow arrow) {
 			// the bow's enchantments go along: power, punch, flame (a burning arrow)
 			if (arrow.entityTags().contains(HIT_TAG) || !moving) {

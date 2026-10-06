@@ -46,8 +46,9 @@ async def cam_loop(ws, state):
     while True:
         x, y, z = state["pos"]
         f += 1
-        await ws.send(json.dumps({"t": "cam", "f": f, "p": [x, y + 1.62, z], "r": [0, 20, 0], "fov": 70, "fp": True, "pl": [x, y, z], "h": 0,
-                                  "ctl": True, "hp": [100, 100], "ar": 0, "st": 100.0, "walk": state["walk"], "in": 0}))
+        await ws.send(json.dumps({"t": "cam", "f": f, "p": [x, y + 1.62, z], "r": [state.get("yaw", 0), state.get("pitch", 20), 0], "fov": 70, "fp": True, "pl": [x, y, z], "h": 0,
+                                  "ctl": True, "hp": [100, 100], "ar": 0, "st": 100.0, "walk": state["walk"], "in": 0,
+                                  "air": state.get("air", -1.0)}))
         await asyncio.sleep(1 / 60)
 
 
@@ -124,6 +125,38 @@ async def main():
         state["walk"] = False
         state["pos"] = [3.5, 60.0, 0.5]
         await asyncio.sleep(1.0)
+        # the host's breath under its water (while it moves the player) is Minecraft's air
+        state["pos"] = [3.5, 60.0, 0.5]
+        state["air"] = 0.5
+        await asyncio.sleep(1.0)
+        await check("as @p if entity @s[nbt={Air:150s}]", "fox", "a_c_coyote", "the host's half breath: Minecraft's air half (150)")
+        await asyncio.sleep(2.5)
+        await check("as @p if entity @s[nbt={Air:150s}]", "wolf", "a_c_husky", "and Minecraft doesn't run it down itself")
+        state["air"] = -1.0
+
+        # a fishing rod cast into the host's water: the bobber floats in it (Minecraft fishes there)
+        state["pos"] = [-1.5, 64.0, 0.5]
+        state["yaw"], state["pitch"] = -90, -10  # (east, out over the water)
+        await cmd('item replace entity @a weapon.mainhand with minecraft:fishing_rod')
+        await asyncio.sleep(0.5)
+        await ws.send(json.dumps({"t": "key", "k": "use", "down": True}))
+        await asyncio.sleep(0.1)
+        await ws.send(json.dumps({"t": "key", "k": "use", "down": False}))
+        await asyncio.sleep(3.0)
+        await check("if entity @e[type=fishing_bobber,x=0,y=58,z=-4,dx=8,dy=9,dz=8]", "pig", "a_c_pig",
+                    "a bobber cast into the host's water floats in it")
+        await cmd("kill @e[type=fishing_bobber]")
+        state["yaw"], state["pitch"] = 0, 20
+        await cmd('item replace entity @a weapon.mainhand with minecraft:trident[enchantments={"minecraft:riptide":3}]')
+
+        # experience where one of the host's people the player killed fell
+        await cmd("kill @e[type=experience_orb]")
+        await ws.send(json.dumps({"t": "xp", "pos": [-6.5, 64.0, -6.5], "n": 5}))
+        await asyncio.sleep(0.6)
+        await check("if entity @e[type=experience_orb]", "rabbit", "a_c_rabbit_01", "a kill in the host's world drops experience")
+        await ws.send(json.dumps({"t": "hitmark", "kill": True, "shot": False}))
+        await asyncio.sleep(0.3)
+
         # and not on the host's dry ground
         state["pos"] = [-10.5, 64.0, 0.5]
         await asyncio.sleep(1.0)

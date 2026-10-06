@@ -224,6 +224,11 @@ Also:
 - Minecraft armour you wear protects GTA's player too (4% less damage a point).
 - Hunger bar = stamina: sprinting and hard swimming use it up; empty, you can't sprint until it's back to a third.
 - Arrows stick in people, cars and signs and move with them; arrows and fists break glass where they hit, like a bullet.
+- Hits on GTA's people and cars show a hit marker with Minecraft's hit sounds (red, with the XP chime, for a kill), and
+  people you kill drop experience orbs.
+- Fishing rods work in GTA's sea, lakes and rivers; things thrown or shot into GTA's water splash; Impaling tridents
+  hit harder in water and rain. While GTA moves you, its breath is your air bubbles.
+- In a mission's armed vehicle (a Buzzard, a tank) the mouse fires its weapons; Q takes cover when GTA asks for it.
 - A swing hits what your crosshair is on (a person, a car, a thing), not everyone round about (the mace's falling smash
   still hits all round). Weapons knock along where you look: look up while hitting and they fly up. Lamp posts, signs,
   bins and car parts can be hit and launched too, much further with Knockback. (GTA's own map objects are never moved
@@ -328,6 +333,7 @@ pitch = −pitch. The script picks yOffset so the ground where the player stands
 | `gta/tests/` | `check_natives.py` (every native's hash and argument count against the native DB), `fakegta.cpp`, `ws_test.cpp` |
 | `tests/sim/` | a GTA simulator: the script compiled on Linux against a box world, with mocked natives |
 | `tests/*.py`, `tests/RigCheck.java` | Minecraft-side integration tests (a fake GTA over the link) and the rig maths check |
+| `CHANGELOG.md` | what changed in each pass |
 | `tools/host/`, `tools/video/` | older test tools and the video/director pipeline (the plugin obeys the director only with `Director=1` in MCPassthrough.ini) |
 | `dist/passthrough-0.1.0.jar` | the built Minecraft mod |
 

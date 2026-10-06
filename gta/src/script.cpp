@@ -90,6 +90,7 @@ namespace
 		int mode = 1;      // GTA's view mode, cycled by its view key (V): 0..2 third person, near to far; 4 first person
 		int64_t last = 0;
 		float fov = 50.0f; // GTA's, as the camera took over: kept (GTA's own widens and narrows as the player speeds up)
+		float pull = -1.0f; // third person: how far behind Steve it is now (eased back out after a wall pulled it in)
 	} g_walkCam;
 	// MCPassthrough.ini next to MCPassthrough.asi ([Minecraft] LookSensitivity=1.0, InvertLook=0, FreeLook=1)
 	struct Settings
@@ -182,6 +183,7 @@ namespace
 		bool seen;
 		bool done; // hit something of GTA's already: no more tracing, and no burst when it goes
 		float ux = 0, uy = 0, uz = 0; // which way it last flew
+		bool wet = false; // gone into GTA's water (splashed there)
 	};
 	std::map<int, Projectile> g_projectiles;
 	std::vector<Entity> g_army; // tanks, helicopters and their crews ("army" op), to clear them again
@@ -402,6 +404,8 @@ namespace
 	float entity_mass(Entity e);
 	bool world_probe(Entity ignore, float x0, float y0, float z0, float x1, float y1, float z1, int flags, int options, Vector3 &at,
 		Vector3 &normal, Entity &entity, Hash &material);
+	bool solid_probe(Ped ped, float x0, float y0, float z0, float x1, float y1, float z1, Vector3 &at, Vector3 &normal);
+	void mc_hit(Entity e, bool shot);
 	void dug_message(const std::string &m);
 	void dig_clear();
 	void leash_gone(int id);
@@ -657,21 +661,18 @@ namespace
 		va_end(again);
 	}
 
-	/// Steve stands in for GTA's player: hide it (again, if a mission showed it), or give back the one we hid.
+	/// Steve stands in for GTA's player: it isn't drawn, this frame (called every frame). Only not drawn: GTA's people
+	/// still see the player (made invisible for real, a mission's enemies never spotted it and its guards never
+	/// noticed, so scripted fights and chases didn't start), and a mission showing or hiding it isn't fought.
 	void hide_player(Ped ped)
 	{
-		if (g_hiddenPed != 0 && g_hiddenPed != ped && natives::DoesEntityExist(g_hiddenPed))
-			natives::SetEntityVisible(g_hiddenPed, TRUE, FALSE); // the character switched away from shows again
-		if (natives::IsEntityVisible(ped))
-			natives::SetEntityVisible(ped, FALSE, FALSE);
+		natives::SetEntityLocallyInvisible(ped);
 		g_hiddenPed = ped;
 	}
 
 	void unhide_player()
 	{
-		if (g_hiddenPed != 0 && natives::DoesEntityExist(g_hiddenPed))
-			natives::SetEntityVisible(g_hiddenPed, TRUE, FALSE);
-		g_hiddenPed = 0;
+		g_hiddenPed = 0; // (nothing to undo: it was only not drawn, a frame at a time)
 	}
 
 	/// GTA's water surface over (x, y) between `low` (its bed, or the feet) and `high`, if there's water there. (GET_WATER_HEIGHT
@@ -1512,8 +1513,38 @@ namespace
 	/// GTA's, it acts there (a firework blows up, an arrow or trident lands a bullet in a person or car or sticks in a
 	/// wall, a potion splashes, a wind charge bursts, ...), and Minecraft is told where (so it ends there too). GTA glass
 	/// on the way shatters and the projectile flies on.
-	bool projectile_segment(Ped ped, int id, const Projectile &pr, float bx, float by, float bz)
+	/// A splash in GTA's water where something of Minecraft's went in (an arrow, a trident, a pearl, a bobber): GTA's own
+	/// splash, a harmless shot into the water there (nobody's: no wanted level for it).
+	void water_splash(float x, float y, float surface)
 	{
+		natives::ShootSingleBulletBetweenCoords(x, y, surface + 1.2f, x, y, surface - 0.6f, 0, kPistol, 0, FALSE);
+	}
+
+	bool projectile_segment(Ped ped, int id, Projectile &pr, float bx, float by, float bz)
+	{
+		// GTA's water crossed on the way (its surface between where it was and where it is): a splash where it went in.
+		// A fishing bobber floats there (Minecraft's water physics have it): traced on, it hit the bed below and was
+		// ended there, so fishing in GTA's sea, lakes and rivers never worked
+		if (!pr.wet)
+		{
+			float surface = 0.0f;
+			if (water_surface(bx, by, std::min(pr.z, bz) - 2.0f, std::max(pr.z, bz) + 2.0f, surface) && bz < surface && pr.z >= surface - 0.05f)
+			{
+				const float t = pr.z - bz > 1e-3f ? std::clamp((pr.z - surface) / (pr.z - bz), 0.0f, 1.0f) : 0.0f;
+				const float wx = pr.x + (bx - pr.x) * t, wy = pr.y + (by - pr.y) * t;
+				pr.wet = true;
+				water_splash(wx, wy, surface);
+				if (pr.kind == "bobber")
+				{
+					// (what's above the water on the way still gets hooked: traced to the surface only)
+					bx = wx;
+					by = wy;
+					bz = surface + 0.05f;
+				}
+			}
+		}
+		else if (pr.kind == "bobber")
+			return false; // (bobbing on GTA's water: Minecraft's own fishing)
 		BOOL hit = FALSE;
 		Vector3 end = {}, normal = {};
 		Entity entity = 0;
@@ -1528,7 +1559,7 @@ namespace
 		{
 			const int probe = natives::StartShapeTestLosProbe(sx0, sy0, sz0, bx, by, bz, 1 | 2 | 4 | 8 | 16 | 64, ignore, kSeeGlass);
 			if (natives::GetShapeTestResultIncludingMaterial(probe, &hit, &end, &normal, &material, &entity) != 2 || !hit)
-				return false;
+				return false; // (a bobber on the water among it: it floats)
 			// one of Minecraft's own blocks (its prop): Minecraft stops the projectile there itself. (Reporting it too
 			// put the arrow a little off the block, and the two sides fought over it: it jittered about.)
 			if (entity != 0 && g_props.handles.count(entity))
@@ -1573,10 +1604,18 @@ namespace
 			// the bow's enchantments: power hurts more, punch knocks people down, flame sets them alight
 			const int power = sub_level(pr.sub, "pw"), punch = sub_level(pr.sub, "pu");
 			const bool flame = pr.sub.find("fl") != std::string::npos;
+			// Impaling: a trident's extra bite on what's in the water or out in the rain (as Minecraft's Bedrock has it:
+			// GTA's people and cars in its sea, or a rainy street)
+			const int impaling = trident ? sub_level(pr.sub, "im") : 0;
+			const bool wetTarget = impaling > 0 && (type == 1 || type == 2) &&
+				(natives::IsEntityInWater(entity) || natives::GetRainLevel() > 0.15f);
+			const float bite = wetTarget ? 1.0f + 0.4f * float(impaling) : 1.0f;
+			if (type == 1 || type == 2)
+				mc_hit(entity, true);
 			if (type == 1 || type == 2)
 				natives::ShootSingleBulletBetweenCoords(end.x - ux * 1.0f, end.y - uy * 1.0f, end.z - uz * 1.0f,
-					end.x + ux * 0.6f, end.y + uy * 0.6f, end.z + uz * 0.6f, int((trident ? 450 : 250) * (1.0f + 0.25f * float(power))), kSniper, ped,
-					FALSE); // (silent: an arrow, not a sniper's shot)
+					end.x + ux * 0.6f, end.y + uy * 0.6f, end.z + uz * 0.6f, int((trident ? 450 : 250) * (1.0f + 0.25f * float(power)) * bite), kSniper,
+					ped, FALSE); // (silent: an arrow, not a sniper's shot)
 			else
 				stick = true;
 			if (type == 1 && punch > 0)
@@ -1652,6 +1691,27 @@ namespace
 			}
 			if (normal.z < -0.5f)
 				sz = end.z - 1.85f;
+			// and never inside anything: room for him (0.6 m wide, 1.8 m tall) checked there, and nudged out of what's in
+			// the way (off the wall it hit, down from a ceiling, up from a floor or a slope), up to a metre
+			auto blocked = [&](float x, float y, float z, Vector3 &at, Vector3 &n) {
+				return solid_probe(ped, x, y, z + 0.05f, x, y, z + 1.75f, at, n) || solid_probe(ped, x - 0.3f, y, z + 0.9f, x + 0.3f, y, z + 0.9f, at, n) ||
+					solid_probe(ped, x + 0.3f, y, z + 0.9f, x - 0.3f, y, z + 0.9f, at, n) || solid_probe(ped, x, y - 0.3f, z + 0.9f, x, y + 0.3f, z + 0.9f, at, n) ||
+					solid_probe(ped, x, y + 0.3f, z + 0.9f, x, y - 0.3f, z + 0.9f, at, n);
+			};
+			Vector3 at = {}, n = {};
+			for (int step = 0; step < 4 && blocked(sx, sy, sz, at, n); ++step)
+			{
+				if (n.z > 0.5f)
+					sz = std::max(sz, at.z + 0.02f); // a floor or a slope under his feet: on it
+				else if (n.z < -0.5f)
+					sz = at.z - 1.8f; // a ceiling: under it
+				else
+				{
+					const float l = std::max(0.01f, std::sqrt(n.x * n.x + n.y * n.y));
+					sx += n.x / l * 0.25f; // a wall: off it
+					sy += n.y / l * 0.25f;
+				}
+			}
 		}
 		if ((pr.kind == "arrow" || pr.kind == "trident") && type >= 1 && type <= 3 && entity != 0)
 		{
@@ -3144,6 +3204,56 @@ namespace
 		int knockback = 0, sharpness = 0, fire = 0, looting = 0, power = 0, punch = 0;
 	};
 
+	// GTA's people Minecraft's player hurt (a swing, an arrow, a trident): till when their death counts as its kill (a
+	// hit marker for it, and experience orbs where they fell)
+	std::unordered_map<Ped, int> g_mcVictims;
+
+	/// Minecraft's swing or shot landed on GTA's person or car `e`: Minecraft shows a hit marker (and plays its sound).
+	void mc_hit(Entity e, bool shot)
+	{
+		if (e == 0 || !natives::DoesEntityExist(e))
+			return;
+		const int type = natives::GetEntityType(e);
+		if (type != 1 && type != 2)
+			return;
+		if (type == 1 && natives::IsPedDeadOrDying(e))
+			return; // (a body shoved about)
+		sendf("{\"t\":\"hitmark\",\"kill\":false,\"shot\":%s}", shot ? "true" : "false");
+		if (type == 1)
+			g_mcVictims[Ped(e)] = natives::GetGameTimer() + 8000;
+	}
+
+	/// Now and then: who Minecraft's player hurt and has since died is its kill: the kill marker, and experience
+	/// (a person 5, a cop or soldier 8, an animal 2) where they lie.
+	void victims_tick()
+	{
+		static int next = 0;
+		const int now = natives::GetGameTimer();
+		if (g_mcVictims.empty() || now < next)
+			return;
+		next = now + 100;
+		for (auto it = g_mcVictims.begin(); it != g_mcVictims.end();)
+		{
+			const Ped q = it->first;
+			if (!natives::DoesEntityExist(q) || now > it->second)
+			{
+				it = g_mcVictims.erase(it);
+				continue;
+			}
+			if (!natives::IsPedDeadOrDying(q))
+			{
+				++it;
+				continue;
+			}
+			const Vector3 o = natives::GetEntityCoords(q, TRUE);
+			const int type = natives::GetPedType(q);
+			const int xp = !natives::IsPedHuman(q) ? 2 : type == 6 || type == 27 || type == 29 ? 8 : 5;
+			sendf("{\"t\":\"hitmark\",\"kill\":true,\"shot\":false}");
+			sendf("{\"t\":\"xp\",\"pos\":[%.2f,%.2f,%.2f],\"n\":%d}", o.x, o.z - 1.0f + g_yOffset, -o.y, xp);
+			it = g_mcVictims.erase(it);
+		}
+	}
+
 	/// A dent where a swing (or anything) lands on car `v` at `at` (world), deeper for harder hits.
 	/// A dent in car `v` at `at` (world), `radius` metres across. (SET_VEHICLE_DAMAGE's radius isn't in metres: about
 	/// 250 to the metre; at the metre sizes it took, and the damage it had, the dents didn't show.)
@@ -3276,6 +3386,7 @@ namespace
 				natives::ApplyForceToEntity(q, ux * 9.0f * push * knock, uy * 9.0f * push * knock, 3.0f * push + uz * 9.0f * push * knock);
 				return;
 			}
+			mc_hit(q, false);
 			if (en.looting > 0)
 				natives::SetPedMoney(q, 40 * (1 + 2 * en.looting)); // (dropped when they die)
 			natives::ApplyDamageToPed(q, std::max(1, int(style->damage * hurt * (smash ? 2.0f : 1.0f))));
@@ -3326,6 +3437,7 @@ namespace
 			done.insert(aimed);
 		}
 		auto hitCar = [&](Vehicle v, const Vector3 &at) {
+			mc_hit(v, false);
 			if (style->car > 0.0f)
 				natives::ApplyForceToEntity(v, ux * style->car * push * knock, uy * style->car * push * knock,
 					style->carUp * push * (smash ? 2.0f : 1.0f) + uz * style->car * push * knock);
@@ -7452,6 +7564,9 @@ namespace
 		if (tell)
 			sendf("{\"t\":\"boatleave\",\"ped\":%d}", ped);
 		g_riderFreedAt[ped] = natives::GetGameTimer();
+		if (g_riderFreedAt.size() > 64) // (only the last few seconds' matter: it grew for ever)
+			for (auto it = g_riderFreedAt.begin(); it != g_riderFreedAt.end();)
+				it = natives::GetGameTimer() - it->second > 3000 ? g_riderFreedAt.erase(it) : std::next(it);
 	}
 
 	void riders_clear_all(bool tell)
@@ -7837,6 +7952,14 @@ namespace
 			natives::SetCamActive(g_walkCam.cam, TRUE);
 			natives::RenderScriptCams(TRUE);
 			g_walkCam.last = now;
+			g_walkCam.pull = -1.0f;
+		}
+		// a mission's own camera ended (GTA went back to its gameplay camera, which is held still here: the view locked):
+		// ours renders again. (While a mission's camera renders, it's left alone.)
+		if (natives::GetRenderingCam() == -1)
+		{
+			natives::SetCamActive(g_walkCam.cam, TRUE);
+			natives::RenderScriptCams(TRUE);
 		}
 		const float dt = std::clamp(float(now - g_walkCam.last) * 1e-9f, 0.0f, 0.1f);
 		g_walkCam.last = now;
@@ -7896,9 +8019,15 @@ namespace
 						break;
 					}
 				}
-			cx = ex - fx * keep;
-			cy = ey - fy * keep;
-			cz = ez - fz * keep;
+			// in at once when something comes between (never through it), and eased back out when it's gone (it jumped
+			// out in one frame, past a lamp post or a doorway)
+			if (g_walkCam.pull < 0.0f || keep < g_walkCam.pull)
+				g_walkCam.pull = keep;
+			else
+				g_walkCam.pull += (keep - g_walkCam.pull) * (1.0f - std::exp(-dt * 4.0f));
+			cx = ex - fx * g_walkCam.pull;
+			cy = ey - fy * g_walkCam.pull;
+			cz = ez - fz * g_walkCam.pull;
 		}
 		natives::SetCamCoord(g_walkCam.cam, cx, cy, cz);
 		natives::SetCamRot(g_walkCam.cam, g_walkCam.pitch, 0.0f, g_walkCam.heading);
@@ -8340,6 +8469,7 @@ namespace
 		g_doing = "leads";
 		leash_tick(ped);
 		loose_tick(ped);
+		victims_tick();
 		later_tick();
 		landing_tick(ped);
 		g_doing = "boats";
@@ -8492,9 +8622,27 @@ namespace
 			const bool dead = natives::IsEntityDead(ped) || natives::IsPedDeadOrDying(ped);
 			// GTA's health, armour and stamina, for Minecraft's hearts, armour and hunger bars
 			const int hp = std::max(0, real_health(ped) - 100), hpMax = std::max(1, real_max_health(ped) - 100);
-			char bars[128];
-			snprintf(bars, sizeof(bars), ",\"hp\":[%d,%d],\"ar\":%d,\"st\":%.1f,\"fly\":%s,\"ht\":%.3f,\"rain\":%.2f", hp, hpMax,
-				natives::GetPedArmour(ped), g_stamina, g_carFly.on ? "true" : "false", g_steveHeight, natives::GetRainLevel());
+			// GTA's breath under its water while GTA moves the player (Minecraft's air bubbles show it, and Minecraft doesn't
+			// drown its player on top of GTA's own drowning); -1 while Minecraft moves it (Minecraft's breath then)
+			float air = -1.0f;
+			if (!g_walk.on && !g_drive.on)
+			{
+				static float most = 10.0f;
+				static Ped mostOf = 0;
+				const float left = natives::GetPlayerUnderwaterTimeRemaining(player);
+				if (!natives::IsPedSwimmingUnderWater(ped))
+				{
+					if (left > 0.5f && (left > most || mostOf != ped))
+						most = left; // (a full breath: each character's own lungs)
+					mostOf = ped;
+					air = 1.0f;
+				}
+				else
+					air = std::clamp(left / std::max(1.0f, most), 0.0f, 1.0f);
+			}
+			char bars[160];
+			snprintf(bars, sizeof(bars), ",\"hp\":[%d,%d],\"ar\":%d,\"st\":%.1f,\"fly\":%s,\"ht\":%.3f,\"rain\":%.2f,\"air\":%.3f", hp, hpMax,
+				natives::GetPedArmour(ped), g_stamina, g_carFly.on ? "true" : "false", g_steveHeight, natives::GetRainLevel(), air);
 			sendf("{\"t\":\"cam\",\"f\":%d,\"p\":[%.4f,%.4f,%.4f],\"r\":[%.3f,%.3f,%.3f],\"fov\":%.3f,\"fp\":%s,\"pl\":[%.4f,%.4f,%.4f],\"h\":%.3f,"
 				  "\"gun\":%s,\"veh\":%s,\"sn\":%s,\"aim\":[%.3f,%.3f,%.3f],\"aimOn\":%s,\"walk\":%s,\"in\":%d,\"dead\":%s,"
 				  "\"gh\":[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.0f,%.0f],\"ghOn\":%s,\"ctl\":%s%s%s}",
@@ -8572,14 +8720,31 @@ namespace
 				}
 				else
 				{
+					// a car, helicopter or jet with guns or rockets of its own (a mission's Buzzard, a tank): its weapon
+					// keys are GTA's, and the mouse fires them, not Minecraft's item
+					const bool armed = inVehicle && natives::DoesVehicleHaveWeapons(natives::GetVehiclePedIsIn(ped, FALSE));
+					// Q: cover when GTA asks for it (its help text: "press Q to take cover") or the player is in cover,
+					// else Minecraft's drop
+					const bool cover = !inVehicle && (natives::IsHelpMessageBeingDisplayed() || natives::IsPedInCover(ped));
+					static const std::set<int> vehicleWeapons = {68, 69, 70, 91, 92, 99, 100, 114, 115, 116};
 					for (int control : kDisabledControls)
-						if (!g_missionAim || control != 25) // (aiming along with the bow in a mission)
+						if ((!g_missionAim || control != 25) && // (aiming along with the bow in a mission)
+							!(armed && vehicleWeapons.count(control)) && !(cover && control == 44))
 							natives::DisableControlAction(0, control, TRUE);
 					if (g_missionAim)
 						natives::SetControlValueNextFrame(0, 25, 1.0f);
-					forward_button(24, "attack");
-					forward_button(25, "use");
-					forward_button(44, "drop"); // Q (GTA's cover key)
+					static bool wasArmed = false;
+					if (armed && !wasArmed)
+						for (const char *k : {"attack", "use"}) // (nothing left held in Minecraft)
+							sendf("{\"t\":\"key\",\"k\":\"%s\",\"down\":false}", k);
+					wasArmed = armed;
+					if (!armed)
+					{
+						forward_button(24, "attack");
+						forward_button(25, "use");
+					}
+					if (!cover)
+						forward_button(44, "drop"); // Q (GTA's cover key)
 					if (natives::IsDisabledControlJustPressed(0, 14) || natives::IsDisabledControlJustPressed(0, 16))
 						g_ws.send("{\"t\":\"scroll\",\"d\":-1}");
 					if (natives::IsDisabledControlJustPressed(0, 15) || natives::IsDisabledControlJustPressed(0, 17))

@@ -116,6 +116,13 @@ public final class HostBridge {
 			attributesSet = on;
 		}
 
+		// the host's breath (while it moves the player): Minecraft's air bubbles are it, and Minecraft never drowns its
+		// player itself on top of the host's own drowning
+		float air = Passthrough.hostAir;
+		if (on && air >= 0.0F && !Passthrough.walking) {
+			player.setAirSupply(Math.round(air * player.getMaxAirSupply()));
+		}
+
 		float host = Passthrough.hostHealth;
 		if (!on || host < 0.0F || player.isCreative() || player.isSpectator() || !player.isAlive()) {
 			healthSet = -1.0F;

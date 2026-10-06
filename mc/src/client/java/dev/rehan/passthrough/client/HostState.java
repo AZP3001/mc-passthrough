@@ -103,6 +103,7 @@ public final class HostState {
 
 		lastHealth = pose.health();
 		Passthrough.hostRain = m.has("rain") && m.get("rain").getAsFloat() > 0.15F;
+		Passthrough.hostAir = m.has("air") ? m.get("air").getAsFloat() : -1.0F;
 		latest = pose;
 		Passthrough.hostHit = pose.hostHit();
 		Passthrough.hostHealth = pose.health() < 0 ? -1.0F : Math.min(20.0F, 20.0F * pose.health() / pose.healthMax());

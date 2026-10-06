@@ -69,6 +69,7 @@ int64_t g_nanos = 1000000000LL;
 int g_ms = 10000, g_frame = 0;
 float g_camHeading = 0, g_camPitch = 0;
 bool g_cutscene = false;
+int g_renderingCam = -1; // the camera GTA renders (-1: its gameplay camera)
 int g_playerPed = 1;                 // PLAYER_PED_ID (a character switch changes it)
 std::map<int, bool> g_visible;       // SET_ENTITY_VISIBLE
 std::map<int, bool> g_frozenOf;      // FREEZE_ENTITY_POSITION, any entity
@@ -97,9 +98,10 @@ struct SimNpc
 {
 	float x = 0, y = 0, z = 11.4f, vx = 0, vy = 0, vz = 0;
 	Hash model = 0;
-	bool human = true, frozen = false, inCar = false;
+	bool human = true, frozen = false, inCar = false, dead = false;
 };
 std::map<int, SimNpc> g_npcs;
+float g_waterTop = NAN; // GTA's water surface (everywhere), or none
 struct SimCar
 {
 	bool on = false;
@@ -262,6 +264,8 @@ PUINT64 nativeCall()
 		retI(int(npc->second.model));
 	else if (npc != g_npcs.end() && h == H_IsPedHuman)
 		retI(npc->second.human);
+	else if (npc != g_npcs.end() && (h == H_IsPedDeadOrDying || h == H_IsPedFatallyInjured || h == H_IsEntityDead))
+		retI(npc->second.dead);
 	else if (npc != g_npcs.end() && h == H_GetOffsetFromEntityGivenWorldCoords)
 		retV(F(1) - npc->second.x, F(2) - npc->second.y, F(3) - npc->second.z);
 	else if (npc != g_npcs.end() && h == H_TaskGoStraightToCoord)
@@ -284,6 +288,17 @@ PUINT64 nativeCall()
 		retI(g_pickups.count(I(0)) ? 1 : 0);
 	else if (h == H_IsCutscenePlaying)
 		retI(g_cutscene);
+	else if (h == H_GetWaterHeight)
+	{
+		*P<float>(3) = std::isnan(g_waterTop) ? 0.0f : g_waterTop;
+		retI(!std::isnan(g_waterTop));
+	}
+	else if (h == H_ShootSingleBulletBetweenCoords)
+		g_calls.push_back("Bullet:" + std::to_string(I(6)));
+	else if (h == H_GetRenderingCam)
+		retI(g_renderingCam);
+	else if (h == H_RenderScriptCams)
+		g_renderingCam = I(0) ? 77 : -1;
 	else if (h == H_UpdateOnscreenKeyboard)
 		retI(3); // (GTA's keyboard isn't up)
 	else if (npc == g_npcs.end() && h == H_GetEntityModel && g_types.count(I(0)) && g_types[I(0)] == 3)
@@ -1124,6 +1139,61 @@ int main()
 	}
 	g_world.pop_back();
 	g_objects.clear();
+
+	// ---- a person punched: a hit marker in Minecraft; dead soon after: the kill's marker, and experience where they lie ----
+	{
+		look(0.0f);
+		g_npcs[7] = {g_walk.x, g_walk.y + 2.0f, g_walk.z + 1.0f};
+		g_types[7] = 1;
+		g_world.push_back({g_walk.x - 0.3f, g_walk.y + 1.8f, g_walk.z, g_walk.x + 0.3f, g_walk.y + 2.2f, g_walk.z + 1.9f, 7});
+		g_in.push_back("{\"t\":\"melee\",\"k\":\"sword\",\"s\":1.00,\"kb\":0,\"sh\":0,\"fa\":0,\"lo\":0}");
+		frame();
+		check(count_out("\"t\":\"hitmark\",\"kill\":false") == 1, "a person hit: Minecraft shows a hit marker");
+		g_npcs[7].dead = true;
+		int kills = 0, xp = 0;
+		for (int i = 0; i < 12; ++i)
+		{
+			frame();
+			kills += count_out("\"t\":\"hitmark\",\"kill\":true");
+			xp += count_out("\"t\":\"xp\"");
+		}
+		check(kills == 1 && xp == 1, "and their death is Minecraft's kill: its marker and experience orbs, once");
+		g_world.pop_back();
+		g_npcs.erase(7);
+	}
+
+	// ---- a fishing bobber cast into GTA's water: it splashes and floats there (not traced to the bed and ended) ----
+	{
+		g_waterTop = 11.2f; // (over the floor at 10.4)
+		char m[200];
+		snprintf(m, sizeof(m), "{\"t\":\"proj\",\"p\":[[950,\"bobber\",%.3f,%.3f,%.3f]]}", g_walk.x, 12.0 + g_yOffset, -(g_walk.y + 1.0));
+		g_in.push_back(m);
+		frame();
+		g_calls.clear();
+		snprintf(m, sizeof(m), "{\"t\":\"proj\",\"p\":[[950,\"bobber\",%.3f,%.3f,%.3f]]}", g_walk.x, 10.6 + g_yOffset, -(g_walk.y + 3.0));
+		g_in.push_back(m);
+		frame();
+		int hits = count_out("\"t\":\"projhit\"");
+		snprintf(m, sizeof(m), "{\"t\":\"proj\",\"p\":[[950,\"bobber\",%.3f,%.3f,%.3f]]}", g_walk.x, 10.1 + g_yOffset, -(g_walk.y + 3.2)); // (on down to the bed: it would hit it)
+		g_in.push_back(m);
+		frame();
+		hits += count_out("\"t\":\"projhit\"");
+		check(hits == 0 && std::find(g_calls.begin(), g_calls.end(), "Bullet:0") != g_calls.end(),
+			"a fishing bobber cast into GTA's water splashes and floats there (Minecraft fishes in it)");
+		g_waterTop = NAN;
+		g_in.push_back("{\"t\":\"proj\",\"p\":[]}");
+		frame();
+	}
+
+	// ---- a mission's own camera ends: the free-look camera takes the view back (GTA's own is held still: it locked) ----
+	{
+		for (int i = 0; i < 3; ++i)
+			frame();
+		const bool ours = g_renderingCam == 77;
+		g_renderingCam = -1; // (a mission rendered its camera, then went back to GTA's gameplay camera)
+		frame();
+		check(ours && g_renderingCam == 77, "a mission's camera over: the free-look camera renders again");
+	}
 
 	// ---- a pickup in reach: GTA's player is put on it to collect it, Minecraft's player isn't moved ----
 	{

@@ -91,6 +91,11 @@ public final class HostLink extends WebSocketServer {
 					HostWater.clear();
 				}
 				case "gwater" -> HostWater.update(ints(m.getAsJsonArray("c")));
+				case "hitmark" -> HitMarker.hit(m.has("kill") && m.get("kill").getAsBoolean(), m.has("shot") && m.get("shot").getAsBoolean());
+				case "xp" -> {
+					JsonArray at = m.getAsJsonArray("pos");
+					WorldBridge.experience(at.get(0).getAsDouble(), at.get(1).getAsDouble(), at.get(2).getAsDouble(), m.get("n").getAsInt());
+				}
 				case "waypoint" -> {
 					int[] w = m.has("c") ? ints(m.getAsJsonArray("c")) : new int[0];
 					WorldBridge.waypoint(w.length >= 3 ? new net.minecraft.core.BlockPos(w[0], w[1], w[2]) : null);

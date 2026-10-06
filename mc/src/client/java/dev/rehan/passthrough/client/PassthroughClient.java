@@ -120,6 +120,11 @@ public class PassthroughClient implements ClientModInitializer {
 			minecraft.player.respawn();
 		}
 
+		// the host's breath as Minecraft's air bubbles (the server keeps it too: HostBridge)
+		if (minecraft.player != null && Passthrough.active && Passthrough.hostAir >= 0.0F && !PlayerSync.walking()) {
+			minecraft.player.setAirSupply(Math.round(Passthrough.hostAir * minecraft.player.getMaxAirSupply()));
+		}
+
 		if (!configured) {
 			configured = true;
 			configure(minecraft.options);
