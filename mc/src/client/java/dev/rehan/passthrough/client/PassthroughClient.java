@@ -89,8 +89,19 @@ public class PassthroughClient implements ClientModInitializer {
 			ServerPlayer player = handler.player;
 			// never left gliding from a previous session: with no host yet it would glide down into the void
 			player.stopFallFlying();
-			player.setItemSlot(EquipmentSlot.CHEST, ItemStack.EMPTY);
-			player.getAbilities().flying = true;
+			// (only the elytra a glide put on comes off: the player's own chestplate or elytra stays)
+			net.minecraft.world.item.component.CustomData chest = player.getItemBySlot(EquipmentSlot.CHEST).get(DataComponents.CUSTOM_DATA);
+			if (chest != null && chest.copyTag().getBooleanOr(dev.rehan.passthrough.WorldBridge.GLIDE_TAG, false)) {
+				player.setItemSlot(EquipmentSlot.CHEST, ItemStack.EMPTY);
+			}
+
+			// /fly as the player left it (kept with the player)
+			Passthrough.flyAllowed = player.entityTags().contains(Passthrough.FLY_TAG);
+			if (!player.isCreative() && !player.isSpectator()) {
+				player.getAbilities().mayfly = Passthrough.flyAllowed;
+			}
+
+			player.getAbilities().flying = player.getAbilities().mayfly;
 			player.onUpdateAbilities();
 			setupIn = 10;
 		});

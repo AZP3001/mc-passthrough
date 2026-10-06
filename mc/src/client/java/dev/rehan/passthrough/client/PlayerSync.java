@@ -100,6 +100,10 @@ public final class PlayerSync {
 		}
 
 		player.yBodyRot = player.yBodyRotO = p.firstPerson() ? p.yaw() : p.bodyYaw();
+		if (spinning(player)) {
+			return; // (a trident's riptide flight: Minecraft moves the player, the host follows it as soon as it hears)
+		}
+
 		// the model stands exactly where the host's player is this frame (not a tick behind, interpolating)
 		double x = p.firstPerson() ? p.x() : p.px();
 		double y = p.firstPerson() ? p.y() - player.getEyeHeight() : p.py();
@@ -139,7 +143,9 @@ public final class PlayerSync {
 				// and puts it exactly there again, "pset"), from standing still, on its feet
 				walking = true;
 				Passthrough.walking = true;
-				player.setDeltaMovement(Vec3.ZERO);
+				if (!spinning(player)) {
+					player.setDeltaMovement(Vec3.ZERO); // (a riptide's flight goes on: the host took over for it)
+				}
 				Abilities abilities = player.getAbilities();
 				if (abilities.flying && !player.isSpectator()) {
 					abilities.flying = false; // (a spectator always flies)
@@ -179,7 +185,7 @@ public final class PlayerSync {
 
 		// a trident's riptide launched the player (in the host's water or rain): Minecraft moves it for the flight, and the
 		// host is told so it follows (putting the player back at the host's every tick stopped the riptide dead)
-		if (player.isAutoSpinAttack()) {
+		if (spinning(player)) {
 			if (!riptideSent) {
 				riptideSent = true;
 				Passthrough.events.accept("{\"t\":\"riptide\"}");
@@ -210,6 +216,14 @@ public final class PlayerSync {
 			abilities.flying = true;
 			player.onUpdateAbilities();
 		}
+	}
+
+	/**
+	 * A trident's riptide spin (launched): the client's own spin, as it starts it (its spin flag only comes from the
+	 * server a tick later: the launch was put back at the host's player and stopped dead meanwhile).
+	 */
+	private static boolean spinning(final LocalPlayer player) {
+		return player.isAutoSpinAttack() || ((dev.rehan.passthrough.client.mixin.SpinAccessor) player).passthrough$getSpinTicks() > 0;
 	}
 
 	/** The yaw Minecraft's movement goes by: the host's camera while walking, else the player's own (`own`). */

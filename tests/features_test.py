@@ -78,14 +78,26 @@ async def main():
         await expect(inbox, lambda j: j.get("t") == "animal" and j.get("m") == "a_c_hen", 5, "a chicken becomes the host's hen")
 
         # commands reach the host's world
-        await ws.send(json.dumps({"t": "cmd", "c": "kill @e[type=minecraft:cow]"}))
+        await ws.send(json.dumps({"t": "cmd", "c": "kill @e[type=minecraft:cow]", "chat": True}))
         await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "kill" and j.get("what") == "a_c_cow", 5, "/kill @e[type=cow] kills the host's cows")
-        await ws.send(json.dumps({"t": "cmd", "c": "kill @e"}))
+        await ws.send(json.dumps({"t": "cmd", "c": "kill @e", "chat": True}))
         await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "kill" and j.get("what") == "all", 5, "/kill @e kills the host's people too")
-        await ws.send(json.dumps({"t": "cmd", "c": "time set night"}))
+        # filters as Minecraft's own: all but cows, within 5 blocks, 2 of them
+        await ws.send(json.dumps({"t": "cmd", "c": "kill @e[type=!minecraft:cow,distance=..5,limit=2]", "chat": True}))
+        await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "kill" and j.get("what") == "all" and j.get("not") == "a_c_cow"
+                     and abs(j.get("r", 0) - 5) < 0.01 and j.get("limit") == 2, 5, "/kill @e[type=!cow,distance=..5,limit=2]: the host's too, as filtered")
+        # the mod's own commands (its setup's "time set noon") never reach the host
+        await ws.send(json.dumps({"t": "cmd", "c": "time set midnight"}))
+        await asyncio.sleep(1.0)
+        if any(j.get("t") == "gtacmd" and j.get("c") == "time" for j in inbox):
+            note("FAIL: the mod's own command changed the host's clock")
+            fails.append("internal command forwarded")
+        else:
+            note("OK: the mod's own commands don't change the host's clock or weather")
+        await ws.send(json.dumps({"t": "cmd", "c": "time set night", "chat": True}))
         await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "time" and j.get("h") == 19 and j.get("m") == 0, 5,
                      "/time set night: the host's clock 19:00")
-        await ws.send(json.dumps({"t": "cmd", "c": "weather rain"}))
+        await ws.send(json.dumps({"t": "cmd", "c": "weather rain", "chat": True}))
         await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "weather" and j.get("w") == "rain", 5, "/weather rain: the host's rain")
         await ws.send(json.dumps({"t": "cmd", "c": "time set noon"}))
         await ws.send(json.dumps({"t": "cmd", "c": "weather clear"}))

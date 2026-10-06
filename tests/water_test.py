@@ -112,6 +112,17 @@ async def main():
         await asyncio.sleep(0.9)
         await ws.send(json.dumps({"t": "key", "k": "use", "down": False}))
         await expect(inbox, lambda j: j.get("t") == "riptide", 3, "a riptide trident launches in the host's water")
+        # the host hands its player over to Minecraft for the flight (as GTA does on "riptide"): it flies off, its launch
+        # not lost in the handover (Minecraft's player was put back at the host's every frame, and stopped when walking began)
+        state["walk"] = True
+        await asyncio.sleep(0.6)
+        moved = [j for j in inbox if j.get("t") == "mcpos"]
+        far = max((abs(j["pos"][0] - 3.5) + abs(j["pos"][1] - 60.0) + abs(j["pos"][2] - 0.5) for j in moved), default=0.0)
+        note("OK:" if far > 4.0 else "FAIL:", f"the riptide flies the player off ({far:.1f} blocks)")
+        if far <= 4.0:
+            fails.append("riptide flight")
+        state["walk"] = False
+        state["pos"] = [3.5, 60.0, 0.5]
         await asyncio.sleep(1.0)
         # and not on the host's dry ground
         state["pos"] = [-10.5, 64.0, 0.5]

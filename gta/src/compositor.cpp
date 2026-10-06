@@ -51,6 +51,7 @@ namespace
 	struct Steve
 	{
 		float box[4] = {0, 0, 0, 0}, depth[3] = {0, 0, 0};
+		float carFar = 0.0f;
 		double pos[3] = {0, 0, 0};
 		float height = 1.8f;
 		bool seated = false;
@@ -62,7 +63,7 @@ namespace
 	int32_t g_slots = 0;
 	int64_t g_stride = 0;
 	int64_t g_lastPublish = -1;
-	DWORD g_nextOpenAttempt = 0;
+	ULONGLONG g_nextOpenAttempt = 0;
 
 	struct Layer
 	{
@@ -95,14 +96,16 @@ namespace
 	{
 		if (g_view != nullptr)
 			return true;
-		if (GetTickCount() < g_nextOpenAttempt)
+		if (GetTickCount64() < g_nextOpenAttempt)
 			return false;
-		g_nextOpenAttempt = GetTickCount() + 1000;
+		g_nextOpenAttempt = GetTickCount64() + 1000;
 		g_mapping = OpenFileMappingW(FILE_MAP_READ, FALSE, kMappingName);
 		if (g_mapping == nullptr)
 			return false;
 		const auto *header = static_cast<const uint8_t *>(MapViewOfFile(g_mapping, FILE_MAP_READ, 0, 0, kHeader));
-		if (header == nullptr || read<uint32_t>(header) != kMagic)
+		// (only the layout this reads: version 1, and sizes that make sense)
+		if (header == nullptr || read<uint32_t>(header) != kMagic || read<uint32_t>(header + 4) != 1 || read<int32_t>(header + 12) < 1 ||
+			read<int32_t>(header + 12) > 8 || read<int64_t>(header + 16) <= 0 || read<int64_t>(header + 16) > (int64_t(1) << 30))
 		{
 			if (header != nullptr)
 				UnmapViewOfFile(header);
@@ -199,8 +202,8 @@ namespace
 		if (seq & 1)
 			return;
 		const uint32_t w = read<uint32_t>(desc + 24), h = read<uint32_t>(desc + 28);
-		if (w == 0 || h == 0)
-			return;
+		if (w == 0 || h == 0 || w > 16384 || h > 16384 || int64_t(w) * h * 4 * 3 > g_stride)
+			return; // (three layers of it must fit in the slot)
 		device *dev = runtime->get_device();
 		if (w != g_width || h != g_height)
 		{
@@ -290,12 +293,12 @@ namespace
 	/// Reload MCPassthrough.fx when the file changes (ReShade doesn't watch it), so tweaks don't need a GTA restart.
 	void watch_effect_file(effect_runtime *runtime)
 	{
-		static DWORD next = 0;
+		static ULONGLONG next = 0;
 		static FILETIME last = {};
 		static wchar_t path[MAX_PATH] = {};
-		if (GetTickCount() < next)
+		if (GetTickCount64() < next)
 			return;
-		next = GetTickCount() + 1000;
+		next = GetTickCount64() + 1000;
 		if (path[0] == 0)
 		{
 			GetModuleFileNameW(nullptr, path, MAX_PATH);
@@ -429,6 +432,8 @@ namespace
 		}
 		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveDepth"); v.handle != 0)
 			runtime->set_uniform_value_float(v, steve.depth[0], steve.depth[1], steve.depth[2]);
+		if (const effect_uniform_variable v = runtime->find_uniform_variable(kEffect, "SteveCarFar"); v.handle != 0)
+			runtime->set_uniform_value_float(v, steve.valid && steve.seated ? steve.carFar : 0.0f);
 		// where Minecraft drew Steve, in the camera it drew him with (his feet, and up): only his own pixels take his
 		// motion, and his old place is never drawn elsewhere (that showed him twice, and moved the blocks by him with him)
 		{
@@ -590,11 +595,12 @@ namespace compositor
 	}
 
 	void set_steve(float x0, float y0, float x1, float y1, float near_d, float far_d, float glass_d, double x, double y, double z,
-		float height, bool seated)
+		float height, bool seated, float car_far)
 	{
+		std::lock_guard<std::mutex> lock(g_poseLock); // (all of it: the render thread reads it too)
 		g_steve.height = height;
 		g_steve.seated = seated;
-		std::lock_guard<std::mutex> lock(g_poseLock);
+		g_steve.carFar = car_far;
 		g_steve.box[0] = x0;
 		g_steve.box[1] = y0;
 		g_steve.box[2] = x1;

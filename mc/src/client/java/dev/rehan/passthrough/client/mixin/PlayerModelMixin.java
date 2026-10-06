@@ -15,8 +15,6 @@ abstract class PlayerModelMixin {
 	@SuppressWarnings("unchecked")
 	@Inject(method = "setupAnim(Lnet/minecraft/client/renderer/entity/state/AvatarRenderState;)V", at = @At("TAIL"))
 	private void passthrough$rig(final AvatarRenderState state, final CallbackInfo ci) {
-		// first person: the camera is in his head
-		((HumanoidModel<AvatarRenderState>) (Object) this).head.visible = !SteveRig.firstPerson(state);
 		SteveRig.Pose rig = SteveRig.of(state);
 		if (rig != null) {
 			SteveRig.apply((HumanoidModel<AvatarRenderState>) (Object) this, state, rig);

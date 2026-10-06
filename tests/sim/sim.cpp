@@ -282,6 +282,30 @@ PUINT64 nativeCall()
 	}
 	else if (h == H_IsObjectAPickup)
 		retI(g_pickups.count(I(0)) ? 1 : 0);
+	else if (h == H_IsCutscenePlaying)
+		retI(g_cutscene);
+	else if (h == H_UpdateOnscreenKeyboard)
+		retI(3); // (GTA's keyboard isn't up)
+	else if (npc == g_npcs.end() && h == H_GetEntityModel && g_types.count(I(0)) && g_types[I(0)] == 3)
+		retI(0x5151); // (one of GTA's things)
+	else if (h == H_IsModelValid && I(0) == 0x5151)
+		retI(1);
+	else if (h == H_HasModelLoaded && I(0) == 0x5151)
+		retI(1);
+	else if (h == H_CreateDynamicObject)
+	{
+		// the plugin's copy of one of GTA's things (to move in its place)
+		static int next = 6000;
+		const int id = next++;
+		g_types[id] = 3;
+		g_objPos[id] = {F(1), F(2), F(3)};
+		g_calls.push_back("Copy:" + std::to_string(id));
+		retI(id);
+	}
+	else if (h == H_CreateModelHideExcludingScriptObjects)
+		g_calls.push_back("Hide");
+	else if (h == H_RemoveModelHide)
+		g_calls.push_back("Unhide");
 	else if (npc == g_npcs.end() && h == H_SetEntityVelocity && I(0) != 1)
 		g_calls.push_back("Velocity:" + std::to_string(I(0)));
 	else if (h == H_GetModelDimensions)
@@ -516,7 +540,7 @@ namespace compositor
 	void set_host_planes(float, float) {}
 	void set_host_pose(float, float, float, float, double, double, double) {}
 	void set_pose_lag(int) {}
-	void set_steve(float, float, float, float, float, float, float, double, double, double, float, bool) {}
+	void set_steve(float, float, float, float, float, float, float, double, double, double, float, bool, float) {}
 	void set_camera_locked(bool) {}
 	void set_look(float, float, float) {}
 	void set_screen_fx(float, float, float, float) {}
@@ -645,6 +669,11 @@ int main()
 		{-3, 5, 10.4f, 3, 6, 11.4f, 0}};
 	g_ws.start("127.0.0.1", 0);
 	g_sped = {};
+
+	// messages with quotes and backslashes in their text read whole; a key's name inside some text isn't taken for it
+	check(json_str("{\"t\":\"chat\",\"m\":\"say \\\"hi\\\" C:\\\\x\"}", "m") == "say \"hi\" C:\\x" &&
+			  json_str("{\"a\":\"the \\\"t\\\":\\\"no\\\" bit\",\"t\":\"yes\"}", "t") == "yes",
+		"JSON text with quotes and backslashes is read whole");
 
 	// frames until Minecraft's movement is on and Minecraft has taken over
 	int psets = 0, hcs = 0;
@@ -1076,10 +1105,23 @@ int main()
 	g_calls.clear();
 	g_in.push_back("{\"t\":\"melee\",\"k\":\"fist\",\"s\":1.00,\"kb\":0,\"sh\":0,\"fa\":0,\"lo\":0}");
 	frame();
-	check(std::find(g_calls.begin(), g_calls.end(), "ApplyForce:301") != g_calls.end(), "a sign the crosshair is on is knocked flying (among 400 other things)");
-	check(std::count_if(g_calls.begin(), g_calls.end(), [](const std::string &c) { return c.rfind("ApplyForce:", 0) == 0; }) == 1,
-		"and nothing else (a swing hits what it's on)");
-	check(std::find(g_calls.begin(), g_calls.end(), "Velocity:301") == g_calls.end(), "pushed, never its velocity set (that crashed GTA on map objects)");
+	{
+		// the map's own sign is swapped for the plugin's copy (hidden meanwhile), and that copy flies; the map's own is never
+		// pushed, woken or freed itself (that crashed GTA: "GTA failed during Minecraft's melee")
+		std::string copy;
+		for (const std::string &c : g_calls)
+			if (c.rfind("Copy:", 0) == 0)
+				copy = c.substr(5);
+		check(!copy.empty() && std::find(g_calls.begin(), g_calls.end(), "Hide") != g_calls.end() &&
+				  std::find(g_calls.begin(), g_calls.end(), "Velocity:" + copy) != g_calls.end(),
+			"a sign the crosshair is on is knocked flying (among 400 other things): the plugin's copy of it");
+		check(std::count_if(g_calls.begin(), g_calls.end(), [](const std::string &c) { return c.rfind("Copy:", 0) == 0; }) == 1 &&
+				  std::count_if(g_calls.begin(), g_calls.end(), [](const std::string &c) { return c.rfind("ApplyForce:", 0) == 0; }) == 0,
+			"and nothing else (a swing hits what it's on)");
+		check(std::find(g_calls.begin(), g_calls.end(), "Velocity:301") == g_calls.end() &&
+				  std::find(g_calls.begin(), g_calls.end(), "ApplyForce:301") == g_calls.end(),
+			"GTA's own sign itself is never pushed (that crashed GTA on map objects)");
+	}
 	g_world.pop_back();
 	g_objects.clear();
 
@@ -1167,16 +1209,20 @@ int main()
 		// a door (one of GTA's things) where the crosshair is: hidden, not dug
 		g_types[501] = 3;
 		g_world.push_back({cx + 5.0f, -(cz + 1.0f), 10.4f, cx + 5.1f, -float(cz), 12.4f, 501});
-		snprintf(m, sizeof(m), "{\"t\":\"dug\",\"c\":[%d,%d,%d],\"k\":3}", cx + 5, 10, cz);
+		snprintf(m, sizeof(m), "{\"t\":\"dug\",\"c\":[%d,%d,%d],\"k\":3,\"o\":1}", cx + 5, 10, cz);
+		g_calls.clear();
 		g_in.push_back(m);
 		frame();
-		check(g_visible.count(501) && !g_visible[501] && !g_dug.count(cell_key(cx + 5, 10, cz)), "a door mined: it's taken away (hidden), not dug");
+		check(std::find(g_calls.begin(), g_calls.end(), "Hide") != g_calls.end() && !g_dug.count(cell_key(cx + 5, 10, cz)),
+			"a door mined: it's taken away (hidden), not dug");
 		g_world.pop_back();
 		// /clearall: all back
+		g_calls.clear();
 		g_in.push_back("{\"t\":\"gtacmd\",\"c\":\"clearall\"}");
 		frame();
 		frame();
-		check(g_dug.empty() && g_digFill.empty() && g_visible[501] && compositor::g_digCells == 0, "/clearall: nothing dug any more, the door back");
+		check(g_dug.empty() && g_digFill.empty() && std::find(g_calls.begin(), g_calls.end(), "Unhide") != g_calls.end() && compositor::g_digCells == 0,
+			"/clearall: nothing dug any more, the door back");
 		// under a bridge (the street as a slab with open air under it): the cell under it isn't filled
 		g_world[0] = street;
 		snprintf(m, sizeof(m), "{\"t\":\"dug\",\"c\":[%d,%d,%d],\"k\":0}", cx, cy, cz);

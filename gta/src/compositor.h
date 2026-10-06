@@ -35,8 +35,9 @@ namespace compositor
 	/// glass in front of him (0: none), in metres, and where the character is now (Minecraft coordinates, feet): his part
 	/// of Minecraft's picture is re-projected by the camera's motion less his own, so he stays on the character.
 	/// height: his (metres); seated: in a car's seat (above his waist he shows through the car's windows, an open door's).
+	/// car_far: seated, how far the car's own body reaches from the camera (only that close does it let him show through).
 	void set_steve(float x0, float y0, float x1, float y1, float near_d, float far_d, float glass_d, double x, double y, double z,
-		float height, bool seated);
+		float height, bool seated, float car_far = 0.0f);
 	/// The cells mined out of GTA's world round the camera, for the shader: 64 x 64 x 64 cells from Minecraft cell (ox, oy,
 	/// oz), as 512 x 512 bytes (slice y at column (y % 8) * 64, row (y / 8) * 64; 255 dug out, 128 a block filling round
 	/// it). Null: none.

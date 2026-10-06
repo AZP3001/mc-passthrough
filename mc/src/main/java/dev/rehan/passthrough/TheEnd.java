@@ -32,6 +32,8 @@ import net.minecraft.world.level.block.state.BlockState;
  */
 public final class TheEnd {
 	public static final String TAG = "passthrough_end";
+	/** mob_griefing as it was before the End opened. */
+	private static boolean griefingBefore = true;
 	private static final int RADIUS = 24;
 	private static final int SPREAD_TICKS = 160;
 	private static final int DRAGON_AT = 20 * 25;
@@ -171,7 +173,9 @@ public final class TheEnd {
 		dragon = null;
 		dragonDown = false;
 		planSpread();
-		WorldBridge.command("gamerule mob_griefing false"); // endermen and the dragon leave the builds alone
+		// endermen and the dragon leave the builds alone (the player's own setting back after)
+		griefingBefore = level.getGameRules().get(net.minecraft.world.level.gamerules.GameRules.MOB_GRIEFING);
+		WorldBridge.command("gamerule mob_griefing false");
 		Passthrough.LOG.info("the end: portal at {} {} {}", centerX, portalY, centerZ);
 		Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"end\",\"on\":true,\"pos\":[%.2f,%d,%.2f]}", centerX, portalY, centerZ));
 	}
@@ -331,7 +335,7 @@ public final class TheEnd {
 		level.getAllEntities().forEach(all::add);
 		all.stream().filter(e -> e.entityTags().contains(TAG)).forEach(Entity::discard);
 		if (wasOpen) {
-			WorldBridge.command("gamerule mob_griefing true");
+			WorldBridge.command("gamerule mob_griefing " + griefingBefore);
 		}
 
 		Passthrough.events.accept("{\"t\":\"end\",\"on\":false}");

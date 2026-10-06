@@ -19,11 +19,9 @@ public final class SteveRig {
 	/** The pose being drawn this frame, and the render state it belongs to (the local player's). Render thread only. */
 	private static Pose current;
 	private static AvatarRenderState currentState;
-	/** The local player's render state this frame, how much bigger than Minecraft's Steve he's drawn, and whether the
-	 * camera is in his head (first person: his body shows, his head doesn't). */
+	/** The local player's render state this frame, and how much bigger than Minecraft's Steve he's drawn. */
 	private static AvatarRenderState localState;
 	private static float localScale = 1.0F;
-	private static boolean localFirstPerson;
 
 	/** Angles in radians: body yaw (degrees, Minecraft's), the lean, the head's (x, y, z) and each limb's (x, z). */
 	public record Pose(float bodyRot, float leanA, float leanB, float headX, float headY, float headZ,
@@ -79,20 +77,14 @@ public final class SteveRig {
 		currentState = state;
 	}
 
-	public static void setLocal(final AvatarRenderState state, final float scale, final boolean firstPerson) {
+	public static void setLocal(final AvatarRenderState state, final float scale) {
 		localState = state;
 		localScale = scale;
-		localFirstPerson = firstPerson;
 	}
 
 	/** How much to scale this render state's model (the local player's: to the host character's height). */
 	public static float scaleOf(final AvatarRenderState state) {
 		return state == localState ? localScale : 1.0F;
-	}
-
-	/** Whether this render state is the local player's seen from inside his head. */
-	public static boolean firstPerson(final AvatarRenderState state) {
-		return state == localState && localFirstPerson;
 	}
 
 	/** The pose for this render state (the local player's this frame), or null. */

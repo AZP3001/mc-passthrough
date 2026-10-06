@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[2]   # universal-modder: its um.win finds the capture tools
+REPO = HERE.parents[3]   # universal-modder: its um.win finds the capture tools
 sys.path.append(str(REPO))
 WIN_DIR = os.environ.get("PASSTHROUGH_WIN_DIR", r"C:\dev\passthrough")
 TAKES = WIN_DIR + r"\takes"

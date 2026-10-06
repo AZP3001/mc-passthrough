@@ -26,6 +26,11 @@ abstract class ServerExplosionMixin {
 	@Inject(method = "explode", at = @At("HEAD"))
 	private void passthrough$report(final CallbackInfoReturnable<Integer> cir) {
 		Entity source = this.getDirectSourceEntity();
-		WorldBridge.onExplosion(this.center(), this.radius(), source == null ? "" : BuiltInRegistries.ENTITY_TYPE.getKey(source.getType()).getPath());
+		String kind = source == null ? "" : BuiltInRegistries.ENTITY_TYPE.getKey(source.getType()).getPath();
+		if (kind.equals("wind_charge") || kind.equals("breeze_wind_charge")) {
+			return; // (a gust, not a blast: its own wind burst is the host's, as a projectile)
+		}
+
+		WorldBridge.onExplosion(this.center(), this.radius(), kind);
 	}
 }

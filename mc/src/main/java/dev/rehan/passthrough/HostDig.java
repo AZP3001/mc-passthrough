@@ -40,7 +40,7 @@ public final class HostDig {
 	}
 
 	// from the client (the crosshair, each frame) and the host (cells to fill)
-	private static volatile int[] wanted; // {x, y, z, facing, depth, kind}, or null
+	private static volatile int[] wanted; // {x, y, z, facing, depth, kind, thing}, or null
 	private static final ConcurrentLinkedQueue<int[]> fills = new ConcurrentLinkedQueue<>();
 	private static volatile boolean clearWanted;
 
@@ -85,9 +85,10 @@ public final class HostDig {
 
 	/**
 	 * The crosshair is on the host's world at `cell` with a pickaxe in hand (the surface facing `face`, `depth`
-	 * sixteenths of the cell in front of it; `kind` its material), or on nothing of the host's (null). Client thread.
+	 * sixteenths of the cell in front of it; `kind` its material; `thing`: one of the host's things, a door, a sign, not
+	 * its wall or street), or on nothing of the host's (null). Client thread.
 	 */
-	public static void aim(final BlockPos cell, final Direction face, final int depth, final int kind) {
+	public static void aim(final BlockPos cell, final Direction face, final int depth, final int kind, final boolean thing) {
 		int[] w = wanted;
 		if (cell == null) {
 			if (w != null) {
@@ -97,8 +98,9 @@ public final class HostDig {
 			return;
 		}
 
-		if (w == null || w[0] != cell.getX() || w[1] != cell.getY() || w[2] != cell.getZ() || w[5] != kind) {
-			wanted = new int[] {cell.getX(), cell.getY(), cell.getZ(), face.get3DDataValue(), Math.clamp(depth, 0, 15), Math.clamp(kind, 0, KINDS.length - 1)};
+		if (w == null || w[0] != cell.getX() || w[1] != cell.getY() || w[2] != cell.getZ() || w[5] != kind || (w[6] != 0) != thing) {
+			wanted = new int[] {cell.getX(), cell.getY(), cell.getZ(), face.get3DDataValue(), Math.clamp(depth, 0, 15), Math.clamp(kind, 0, KINDS.length - 1),
+				thing ? 1 : 0};
 		}
 	}
 
@@ -133,6 +135,7 @@ public final class HostDig {
 				BlockState state = SURFACE[w[5]].defaultBlockState().setValue(HostSurfaceBlock.FACING, Direction.from3DDataValue(w[3]))
 					.setValue(HostSurfaceBlock.DEPTH, w[4]);
 				pieceWas = here;
+				pieceThing = w[6] != 0;
 				piece = want;
 				set(level, want, state);
 			}
@@ -179,7 +182,7 @@ public final class HostDig {
 			int kind = pieceKind;
 			dug.put(k, new Was(pieceWas, kind));
 			piece = null;
-			dugOut(pos, kind);
+			dugOut(pos, kind, pieceThing);
 		} else if (!filled.isEmpty() && filled.containsKey(k)) {
 			Was was = filled.get(k);
 			if (state.is(FILL[was.kind()])) {
@@ -188,14 +191,17 @@ public final class HostDig {
 
 			filled.remove(k);
 			dug.put(k, was);
-			dugOut(pos, was.kind());
+			dugOut(pos, was.kind(), false);
 		}
 	}
 
 	private static int pieceKind;
+	private static boolean pieceThing; // the piece is on one of the host's things (a door, a sign), not its wall
 
-	private static void dugOut(final BlockPos pos, final int kind) {
-		Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"dug\",\"c\":[%d,%d,%d],\"k\":%d}", pos.getX(), pos.getY(), pos.getZ(), kind));
+	/** The host is told a cell is mined out (`thing`: it was one of its things there, which goes, not its wall). */
+	private static void dugOut(final BlockPos pos, final int kind, final boolean thing) {
+		Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"dug\",\"c\":[%d,%d,%d],\"k\":%d,\"o\":%d}", pos.getX(), pos.getY(), pos.getZ(),
+			kind, thing ? 1 : 0));
 	}
 
 	private static void set(final ServerLevel level, final BlockPos pos, final BlockState state) {

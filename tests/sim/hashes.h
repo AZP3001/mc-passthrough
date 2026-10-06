@@ -247,6 +247,11 @@
 #define H_IsHudHidden 0xA86478C6958735C5ull
 #define H_GetSelectedPedWeapon 0x0A6DB4965674D243ull
 #define H_HasPedGotWeapon 0x8DECB02F88F428BCull
+#define H_GetMissionFlag 0xA33CDCCDA663159Eull
+#define H_UpdateOnscreenKeyboard 0x0CF2B696BBF945AEull
+#define H_CanPhoneBeSeenOnScreen 0xC4E2813898C97A4Bull
+#define H_SetControlValueNextFrame 0xE8A25867FBA3B05Eull
+#define H_GetBestPedWeapon 0x8483E98E8B888AE2ull
 #define H_IsEntityDead 0x5F9532F3B5CC2551ull
 #define H_IsEntityVisible 0x47D6F43D77935C75ull
 #define H_IsPlayerBeingArrested 0x388A47C51ABDAC8Eull
@@ -266,6 +271,7 @@
 #define H_SmashVehicleWindow 0x9E5B5E4D2CCD2259ull
 #define H_GetOffsetFromEntityInWorldCoords 0x1899F328B0E12848ull
 #define H_GetEntityMaxHealth 0x15D757606D170C3Cull
+#define H_SetEntityMaxHealth 0x166E7CF68597D8B5ull
 #define H_ForceLightningFlash 0xF6062E089251C898ull
 #define H_GetShapeTestResultIncludingMaterial 0x65287525D951F6BEull
 #define H_ClearWeatherTypePersist 0xCCC39339BEF76CF5ull
@@ -278,6 +284,7 @@
 #define H_TaskClimb 0x89D9FCC2435112F1ull
 #define H_TaskClimbLadder 0xB6C987F9285A3814ull
 #define H_GetWaterHeight 0xF6829842C06AE524ull
+#define H_TestProbeAgainstAllWater 0x8974647ED222EA5Full
 #define H_IsHelpMessageBeingDisplayed 0x4D79439A6B55AC67ull
 #define H_GetEntitySpeed 0xD5037BA82E12416Full
 #define H_GetEntityModel 0x9F47B058362C84B5ull
@@ -327,4 +334,8 @@
 #define H_ClearPedTasksImmediately 0xAAA34F8A7CB32098ull
 #define H_IsThisModelABicycle 0xBF94DD42F63BDED2ull
 #define H_RemoveScriptFire 0x7FF548385680673Full
+#define H_CreateDynamicObject 0x9A294B2138ABB884ull
+#define H_CreateModelHideExcludingScriptObjects 0x3A52AE588830BF7Full
+#define H_RemoveModelHide 0xD9E3006FB3CBD765ull
+#define H_ActivatePhysics 0x710311ADF0E20730ull
 #define H_Notify 0x202709F4C58A0424ull

@@ -92,6 +92,7 @@ uniform float3 WarpT = float3(0.0, 0.0, 0.0);
 uniform float3 SteveT = float3(0.0, 0.0, 0.0);
 uniform float4 SteveBox = float4(0.0, 0.0, 0.0, 0.0);
 uniform float3 SteveDepth = float3(0.0, 0.0, 0.0);
+uniform float SteveCarFar = 0.0; // seated: how far from the camera the car's own body reaches
 // Set by the add-on: Steve's feet where Minecraft drew him, in the camera it drew him with (xyz; w: his height, 0 none), and
 // world up in that camera (xyz; w: 1 when he sits in a car).
 uniform float4 SteveMc = float4(0.0, 0.0, 0.0, 0.0);
@@ -224,7 +225,9 @@ bool dug_host(float3 pc)
 {
 	const float3 p = DigHostPos + float3(dot(DigHostRow0, pc), dot(DigHostRow1, pc), dot(DigHostRow2, pc));
 	const float3 d = normalize(float3(dot(DigHostRow0, pc), dot(DigHostRow1, pc), dot(DigHostRow2, pc)));
-	return dig_cell(p) > 0.75 || dig_cell(p + d * 0.04) > 0.75;
+	// (a little into the surface along the view too: GTA's depth isn't exact, and a surface lying on a cell's edge
+	// was found just in front of it now and then, so patches of a mined wall stayed)
+	return dig_cell(p) > 0.75 || dig_cell(p + d * 0.06) > 0.75 || dig_cell(p + d * 0.1) > 0.75;
 }
 
 /// Whether a point of Minecraft's picture (its camera's space) is on the outside of a block filling round a hole (a face
@@ -275,7 +278,7 @@ bool mc_sample(float3 p, float3 T, out float2 n, out float behind)
 bool march(float3 ray, float3 T, float zFar, out float2 muv, out float zm, out float3 qm)
 {
 	const float2 mcScale = float2(WarpTan.y * WarpTan.z, WarpTan.y);
-	const float zNear = 0.2;
+	const float zNear = 0.05; // (in a mined tunnel its walls are a hand's breadth off)
 	muv = 0.0;
 	zm = 1e9;
 	qm = 0.0;
@@ -348,7 +351,8 @@ float on_steve(float3 qm)
 	const float3 d = qm - SteveMc.xyz;
 	const float h = dot(d, SteveUp.xyz);
 	const float3 side = d - SteveUp.xyz * h;
-	return h > -0.25 && h < SteveMc.w + 0.35 && dot(side, side) < 0.6 * 0.6 ? max(h, 0.0) : -1.0;
+	// (from just above his soles: the top of the block he stands on, and a wall he touches, are the world's, not his)
+	return h > 0.04 && h < SteveMc.w + 0.35 && dot(side, side) < 0.45 * 0.45 ? h : -1.0;
 }
 
 void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 outColor : SV_Target0, out float4 outInfo : SV_Target1)
@@ -371,12 +375,16 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 	// how far behind GTA's surface Minecraft may still show: more where that surface is seen at a grazing angle
 	const float allow = min(DepthBias + SlopeBias * abs(ddy(zhSeen)), max(MaxBias, DepthBias));
 	// GTA's wall, street or ground mined out here: it isn't there (whatever Minecraft has behind it shows: the hole's sides)
-	const float zh = DigOn > 0.5 && zhSeen < 2000.0 && dug_host(ray * zhSeen) ? 1e5 : zhSeen;
+	const bool mined = DigOn > 0.5 && zhSeen < 2000.0 && dug_host(ray * zhSeen);
+	const float zh = mined ? 1e5 : zhSeen;
+	// what's behind a mined surface where Minecraft has nothing there either (a wall mined through into GTA's room,
+	// which GTA never drew): a dark hole, not GTA's wall still standing
+	const float3 back = mined ? float3(0.025, 0.025, 0.03) : host;
 	float zm = 1e9;
 	float steveH = -1.0; // how high on Steve this pixel is (-1: not Steve)
 	if (Reproject)
 	{
-		const float zFar = max(min(zh + allow + SteveBias + 0.5, 400.0), 0.5);
+		const float zFar = max(min(zh + allow + SteveBias + 0.5, 1500.0), 0.5);
 		inside = false; // (found by the marches below, or not at all)
 		// Steve moves with the camera (it follows him, a car carries both): his part of the picture moves by the camera's
 		// motion less his own, and only counts where it lands on him
@@ -402,10 +410,29 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 			inside = march(ray, WarpT, zFar, muv, zm, qm);
 			// Steve's old place (where Minecraft drew him) moved by the camera alone: not him (he's drawn above where he
 			// is now). It showed him twice.
-			if (inside && on_steve(qm) >= 0.0)
+			if (inside && zm > SteveDepth.x - 0.4 && zm < SteveDepth.y + 0.4 && on_steve(qm) >= 0.0)
 			{
 				inside = false;
 				zm = 1e9;
+				// what was behind him there isn't in Minecraft's picture: the nearest of the world beside him stands in
+				// (GTA showed through blocks right behind Steve while he moved)
+				const float2 mcScale = float2(WarpTan.y * WarpTan.z, WarpTan.y);
+				const float2 at = muv;
+				[loop] for (int k = 0; k < 16 && !inside; ++k)
+				{
+					const float a = (k % 8) * 0.785398 + (k < 8 ? 0.0 : 0.3927);
+					const float2 t = at + float2(cos(a) * BUFFER_HEIGHT * BUFFER_RCP_WIDTH, sin(a)) * (k < 8 ? 0.012 : 0.03);
+					if (any(t < 0.0) || any(t > 1.0))
+						continue;
+					const float zc = mc_linear(tex2Dlod(sDepth, float4(t, 0, 0)).r);
+					const float3 pc = float3((t * 2.0 - 1.0) * mcScale * zc, -zc);
+					if (zc > 1e8 || on_steve(pc) >= 0.0)
+						continue;
+					muv = t;
+					zm = zc;
+					qm = pc;
+					inside = true;
+				}
 			}
 		}
 		// the outside of a block filling round a hole: GTA's surface shows there, not the block
@@ -445,13 +472,14 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 	// glass in front of him (a shop's window); and in a car's seat, above his waist, whatever of the car is close in front
 	// of him (its windows, an open door's glass, the pillars): the car's own people show there too
 	const bool glass = steve && zm > zh && ((SteveDepth.z > 0.0 && abs(zh - SteveDepth.z) < 0.6) ||
-		(SteveUp.w > 0.5 && steveH > SteveMc.w * 0.42 && zm - zh < 1.4));
+		(SteveUp.w > 0.5 && steveH > SteveMc.w * 0.42 && zm - zh < 1.4 && zh < SteveCarFar)); // (the car's own windows and
+		// pillars, not a wall or another car close in front of it)
 	const float visible = zm < zh + (steve ? max(allow, SteveBias) : allow) || glass ? 1.0 : 0.0;
 	const float cover = world.a * visible;
 	// (relit as straight colour, then put back over GTA's by its coverage)
 	const float3 albedo = world.a > 1e-3 ? world.rgb / world.a : 0.0;
 	const float3 lit = relight(albedo, uv, zm);
-	outColor = float4((glass ? lerp(lit, host, 0.2) : lit) * cover + host * (1.0 - cover), 1.0);
+	outColor = float4((glass ? lerp(lit, host, 0.2) : lit) * cover + back * (1.0 - cover), 1.0);
 	outInfo = float4(cover, cover > 0.0 ? zm : 0.0, zh, 0.0);
 }
 

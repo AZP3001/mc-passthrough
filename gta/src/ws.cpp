@@ -12,15 +12,14 @@ void WsClient::start(const char *host, int port)
 	m_port = port;
 	WSADATA wsa;
 	WSAStartup(MAKEWORD(2, 2), &wsa);
-	m_thread = std::thread([this] { run(); });
+	// (detached: a joinable std::thread left in a global when the plugin unloads ends the game with abort())
+	std::thread([this] { run(); }).detach();
 }
 
 void WsClient::stop()
 {
 	m_stop = true;
 	close();
-	if (m_thread.joinable())
-		m_thread.join();
 }
 
 bool WsClient::open()
@@ -73,7 +72,7 @@ void WsClient::close()
 	std::lock_guard<std::mutex> lock(m_sendLock);
 	if (m_socket != ~uintptr_t(0))
 	{
-		closesocket(static_cast<SOCKET>(m_socket));
+		closesocket(static_cast<SOCKET>(m_socket.load()));
 		m_socket = ~uintptr_t(0);
 	}
 	m_connected = false;
@@ -84,7 +83,10 @@ bool WsClient::recvAll(void *buffer, size_t size)
 	char *p = static_cast<char *>(buffer);
 	while (size > 0)
 	{
-		const int n = recv(static_cast<SOCKET>(m_socket), p, static_cast<int>(size), 0);
+		const uintptr_t socket = m_socket;
+		if (socket == ~uintptr_t(0))
+			return false;
+		const int n = recv(static_cast<SOCKET>(socket), p, static_cast<int>(size), 0);
 		if (n <= 0)
 			return false;
 		p += n;
@@ -125,7 +127,7 @@ bool WsClient::sendFrame(int opcode, const char *data, size_t size)
 	size_t left = frame.size();
 	while (left > 0)
 	{
-		const int n = ::send(static_cast<SOCKET>(m_socket), p, static_cast<int>(left), 0);
+		const int n = ::send(static_cast<SOCKET>(m_socket.load()), p, static_cast<int>(left), 0);
 		if (n <= 0)
 			return false;
 		p += n;
@@ -165,6 +167,7 @@ void WsClient::run()
 		{
 			if (open())
 			{
+				partial.clear(); // (half a message from the connection before is no part of this one's)
 				m_connected = true;
 				++m_generation;
 			}
@@ -197,6 +200,12 @@ void WsClient::run()
 			size = 0;
 			for (int i = 0; i < 8; ++i)
 				size = (size << 8) | ext[i];
+		}
+		// (a length off the wire: nothing Minecraft sends comes near this; more is a broken link, not a message)
+		if (size > (64ull << 20) || partial.size() + size > (64ull << 20))
+		{
+			close();
+			continue;
 		}
 		unsigned char mask[4] = {};
 		const bool masked = (head[1] & 0x80) != 0;

@@ -303,6 +303,11 @@ namespace natives
 	inline BOOL IsHudHidden() { return invoke<BOOL>(0xA86478C6958735C5); }
 	inline Hash GetSelectedPedWeapon(Ped p) { return invoke<Hash>(0x0A6DB4965674D243, p); }
 	inline BOOL HasPedGotWeapon(Ped p, Hash w) { return invoke<BOOL>(0x8DECB02F88F428BC, p, w, FALSE); }
+	inline BOOL GetMissionFlag() { return invoke<BOOL>(0xA33CDCCDA663159E); }
+	inline int UpdateOnscreenKeyboard() { return invoke<int>(0x0CF2B696BBF945AE); }
+	inline BOOL CanPhoneBeSeenOnScreen() { return invoke<BOOL>(0xC4E2813898C97A4B); }
+	inline BOOL SetControlValueNextFrame(int pad, int control, float value) { return invoke<BOOL>(0xE8A25867FBA3B05E, pad, control, value); }
+	inline Hash GetBestPedWeapon(Ped p) { return invoke<Hash>(0x8483E98E8B888AE2, p, FALSE); }
 	inline BOOL IsEntityDead(Entity e) { return invoke<BOOL>(0x5F9532F3B5CC2551, e, FALSE); }
 	inline BOOL IsEntityVisible(Entity e) { return invoke<BOOL>(0x47D6F43D77935C75, e); }
 	inline BOOL IsPlayerBeingArrested(Player p) { return invoke<BOOL>(0x388A47C51ABDAC8E, p, TRUE); }
@@ -323,6 +328,7 @@ namespace natives
 	inline void SmashVehicleWindow(Vehicle v, int index) { invoke<Void>(0x9E5B5E4D2CCD2259, v, index); }
 	inline Vector3 GetOffsetFromEntityInWorldCoords(Entity e, float x, float y, float z) { return invoke<Vector3>(0x1899F328B0E12848, e, x, y, z); }
 	inline int GetEntityMaxHealth(Entity e) { return invoke<int>(0x15D757606D170C3C, e); }
+	inline void SetEntityMaxHealth(Entity e, int value) { invoke<Void>(0x166E7CF68597D8B5, e, value); }
 	inline void ForceLightningFlash() { invoke<Void>(0xF6062E089251C898); }
 	inline int GetShapeTestResultIncludingMaterial(int handle, BOOL *hit, Vector3 *end, Vector3 *normal, Hash *material, Entity *entity)
 	{
@@ -340,6 +346,10 @@ namespace natives
 	inline void TaskClimb(Ped p) { invoke<Void>(0x89D9FCC2435112F1, p, TRUE); }
 	inline void TaskClimbLadder(Ped p) { invoke<Void>(0xB6C987F9285A3814, p, TRUE); }
 	inline BOOL GetWaterHeight(float x, float y, float z, float *height) { return invoke<BOOL>(0xF6829842C06AE524, x, y, z, height); }
+	inline int TestProbeAgainstAllWater(float x1, float y1, float z1, float x2, float y2, float z2, int flags, float *height)
+	{
+		return invoke<int>(0x8974647ED222EA5F, x1, y1, z1, x2, y2, z2, flags, height);
+	}
 	inline BOOL IsHelpMessageBeingDisplayed() { return invoke<BOOL>(0x4D79439A6B55AC67); }
 	inline float GetEntitySpeed(Entity e) { return invoke<float>(0xD5037BA82E12416F, e); }
 	inline Hash GetEntityModel(Entity e) { return invoke<Hash>(0x9F47B058362C84B5, e); }
@@ -400,6 +410,14 @@ namespace natives
 	inline BOOL IsThisModelABicycle(Hash m) { return invoke<BOOL>(0xBF94DD42F63BDED2, m); }
 	// Minecraft's fire as GTA's own (it spreads to grass, people and cars as GTA's fires do).
 	inline void RemoveScriptFire(int fire) { invoke<Void>(0x7FF548385680673F, fire); }
+	// GTA's own objects (signs, bins, doors) moved as the plugin's copies: the map's own hidden meanwhile.
+	inline Object CreateDynamicObject(Hash m, float x, float y, float z) { return invoke<Object>(0x9A294B2138ABB884, m, x, y, z, FALSE, FALSE, TRUE, 0); }
+	inline void CreateModelHideExcludingScriptObjects(float x, float y, float z, float radius, Hash m)
+	{
+		invoke<Void>(0x3A52AE588830BF7F, x, y, z, radius, m, TRUE);
+	}
+	inline void RemoveModelHide(float x, float y, float z, float radius, Hash m) { invoke<Void>(0xD9E3006FB3CBD765, x, y, z, radius, m, FALSE); }
+	inline void ActivatePhysics(Entity e) { invoke<Void>(0x710311ADF0E20730, e); }
 
 	inline void Notify(const char *text)
 	{

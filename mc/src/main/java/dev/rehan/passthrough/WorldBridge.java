@@ -165,6 +165,11 @@ public final class WorldBridge {
 
 	/** Run a command as the server (op). Results go to the log, not to chat (send_command_feedback is off). */
 	public static void command(final String command) {
+		command(command, false);
+	}
+
+	/** A command run on the server; `chat`: as the player's own, passed on to the host as typed ones are. */
+	public static void command(final String command, final boolean chat) {
 		MinecraftServer s = server;
 		if (s == null) {
 			return;
@@ -172,7 +177,13 @@ public final class WorldBridge {
 
 		s.execute(() -> {
 			Passthrough.LOG.info("command: {}", command);
-			s.getCommands().performPrefixedCommand(s.createCommandSourceStack(), command);
+			// (the mod's own: not passed on to the host, whose clock and weather a setup "time set noon" reset)
+			HostBridge.internal = !chat;
+			try {
+				s.getCommands().performPrefixedCommand(s.createCommandSourceStack(), command);
+			} finally {
+				HostBridge.internal = false;
+			}
 		});
 	}
 
@@ -187,10 +198,48 @@ public final class WorldBridge {
 	/** Arrows the host already hit something with (they stay where they hit and aren't reported again). */
 	private static final String HIT_TAG = "passthrough_hit";
 
+	/** The host's map waypoint (Minecraft coordinates), where compasses point, or null. Any thread. */
+	private static volatile BlockPos waypoint;
+
+	/** The host's waypoint moved (or went: null): compasses point there, as a lodestone compass would. Any thread. */
+	public static void waypoint(final BlockPos at) {
+		waypoint = at;
+	}
+
+	/**
+	 * The player's compasses (not one tied to a lodestone) point at the host's waypoint. (Setting the world's spawn there
+	 * moved the player's respawn point too.)
+	 */
+	private static void compasses(final MinecraftServer s) {
+		BlockPos at = waypoint;
+		if (at == null || s.getPlayerList().getPlayers().isEmpty()) {
+			return;
+		}
+
+		net.minecraft.world.item.component.LodestoneTracker want = new net.minecraft.world.item.component.LodestoneTracker(
+			java.util.Optional.of(net.minecraft.core.GlobalPos.of(net.minecraft.world.level.Level.OVERWORLD, at)), false);
+		ServerPlayer player = s.getPlayerList().getPlayers().get(0);
+		net.minecraft.world.entity.player.Inventory inventory = player.getInventory();
+		for (int i = 0; i < inventory.getContainerSize(); i++) {
+			ItemStack stack = inventory.getItem(i);
+			if (!stack.is(Items.COMPASS)) {
+				continue;
+			}
+
+			net.minecraft.world.item.component.LodestoneTracker now = stack.get(DataComponents.LODESTONE_TRACKER);
+			if (now == null || (!now.tracked() && !want.equals(now))) {
+				stack.set(DataComponents.LODESTONE_TRACKER, want);
+			}
+		}
+	}
+
 	/** Every server tick: block changes, and projectiles in flight for the host to trace through its own world. */
 	static void tick(final MinecraftServer s) {
 		flush(s);
 		flushWater(s.overworld());
+		if (Passthrough.active && s.getTickCount() % 20 == 0) {
+			compasses(s);
+		}
 		if (Passthrough.active) {
 			reportProjectiles(s.overworld());
 		}
@@ -234,7 +283,6 @@ public final class WorldBridge {
 		reportedProjectiles = b != null;
 	}
 
-	/** How the host traces a player's projectile ("kind" or "kind:detail"), or null for one it leaves alone. */
 	/** The level of an enchantment (its id's path) on an item, or 0. */
 	static int enchantment(final ItemStack stack, final String id) {
 		for (var en : stack.getEnchantments().entrySet()) {
@@ -246,6 +294,7 @@ public final class WorldBridge {
 		return 0;
 	}
 
+	/** How the host traces a player's projectile ("kind" or "kind:detail"), or null for one it leaves alone. */
 	private static String projectileKind(final Entity e) {
 		boolean moving = e.getDeltaMovement().lengthSqr() > 1.0E-4;
 		if (e instanceof ThrownTrident trident) {
@@ -288,10 +337,6 @@ public final class WorldBridge {
 		return contents == null ? "" : contents.potion().flatMap(Holder::unwrapKey).map(key -> key.identifier().getPath()).orElse("");
 	}
 
-	/**
-	 * The host traced a projectile into something of its own: a firework bursts there; an arrow goes into a person
-	 * or car (gone) or sticks where it hit a wall; an ender pearl lands there (Steve teleports).
-	 */
 	/** The host's player was saved from dying by the totem in Minecraft's player's hand: used up, as Minecraft's is. */
 	public static void totem() {
 		MinecraftServer s = server;
@@ -349,6 +394,10 @@ public final class WorldBridge {
 		});
 	}
 
+	/**
+	 * The host traced a projectile into something of its own: a firework bursts there; an arrow goes into a person
+	 * or car (gone) or sticks where it hit a wall; an ender pearl lands there (Steve teleports).
+	 */
 	public static void projectileHit(final int id, final double x, final double y, final double z, final boolean stick) {
 		MinecraftServer s = server;
 		if (s == null) {
@@ -488,20 +537,52 @@ public final class WorldBridge {
 			BlockPos c = player.blockPosition();
 			BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
 			int found = 0;
-			for (int x = -radius; x <= radius && found < 3000; x++) {
-				for (int z = -radius; z <= radius && found < 3000; z++) {
-					for (int y = -24; y <= 40; y++) {
-						p.set(c.getX() + x, c.getY() + y, c.getZ() + z);
-						if (!level.isInWorldBounds(p) || !level.isLoaded(p)) {
+			// by chunk section, skipping those with nothing but air and the host's ground (barriers) in them: the whole
+			// box block by block was about a million lookups in one tick (a hitch on every relevel and connect)
+			int yMin = c.getY() - 24, yMax = c.getY() + 40;
+			for (int cx = (c.getX() - radius) >> 4; cx <= (c.getX() + radius) >> 4 && found < 3000; cx++) {
+				for (int cz = (c.getZ() - radius) >> 4; cz <= (c.getZ() + radius) >> 4 && found < 3000; cz++) {
+					LevelChunk chunk = level.getChunkSource().getChunkNow(cx, cz);
+					if (chunk == null) {
+						continue;
+					}
+
+					LevelChunkSection[] sections = chunk.getSections();
+					for (int i = 0; i < sections.length && found < 3000; i++) {
+						int y0 = level.getSectionYFromSectionIndex(i) << 4;
+						LevelChunkSection section = sections[i];
+						if (y0 + 15 < yMin || y0 > yMax || section.hasOnlyAir()
+							|| !section.getStates().maybeHas(state -> !state.isAir() && !state.is(Blocks.BARRIER))) {
 							continue;
 						}
 
-						BlockState state = level.getBlockState(p);
-						if (solidForHost(level, p, state)) {
-							changes.put(p.immutable(), true);
-							found++;
-						} else if (isWater(state.getFluidState()) && water.size() < 4000) {
-							waterChanges.add(p.immutable());
+						for (int x = 0; x < 16; x++) {
+							int bx = (cx << 4) + x;
+							if (Math.abs(bx - c.getX()) > radius) {
+								continue;
+							}
+
+							for (int z = 0; z < 16; z++) {
+								int bz = (cz << 4) + z;
+								if (Math.abs(bz - c.getZ()) > radius) {
+									continue;
+								}
+
+								for (int y = Math.max(0, yMin - y0); y <= Math.min(15, yMax - y0); y++) {
+									BlockState state = section.getBlockState(x, y, z);
+									if (state.isAir() || state.is(Blocks.BARRIER)) {
+										continue;
+									}
+
+									p.set(bx, y0 + y, bz);
+									if (solidForHost(level, p, state)) {
+										changes.put(p.immutable(), true);
+										found++;
+									} else if (isWater(state.getFluidState()) && water.size() < 4000) {
+										waterChanges.add(p.immutable());
+									}
+								}
+							}
 						}
 					}
 				}
@@ -515,6 +596,10 @@ public final class WorldBridge {
 
 	/** Whether glide() put the elytra on (and takes it off again when the flight ends). */
 	private static boolean equippedByGlide;
+	/** Marks the elytra glide() put on (only that one is ever taken off: never the player's own chestplate or elytra). */
+	public static final String GLIDE_TAG = "passthrough_glide";
+	/** Whether the player was in creative flight when the glide began (it's back in it after, only then). */
+	private static boolean flyingBeforeGlide;
 
 	/**
 	 * Gliding on the elytra (creative flight off), launched forward along the look; or back to creative flight. Only
@@ -538,10 +623,13 @@ public final class WorldBridge {
 						return; // no elytra on: no flight
 					}
 
-					player.setItemSlot(EquipmentSlot.CHEST, new ItemStack(Items.ELYTRA));
+					ItemStack elytra = new ItemStack(Items.ELYTRA);
+					net.minecraft.world.item.component.CustomData.update(DataComponents.CUSTOM_DATA, elytra, tag -> tag.putBoolean(GLIDE_TAG, true));
+					player.setItemSlot(EquipmentSlot.CHEST, elytra);
 					equippedByGlide = true;
 				}
 
+				flyingBeforeGlide = player.getAbilities().flying;
 				player.getAbilities().flying = false;
 				player.onUpdateAbilities();
 				player.setOnGround(false);
@@ -555,13 +643,13 @@ public final class WorldBridge {
 					equippedByGlide = false;
 				}
 
-				player.getAbilities().flying = true;
+				// (back in creative flight only if it was flying before, and may: never left flying in survival)
+				player.getAbilities().flying = flyingBeforeGlide && player.getAbilities().mayfly;
 				player.onUpdateAbilities();
 			}
 		});
 	}
 
-	/** `source`: what exploded or was blown up, e.g. "tnt", "creeper", "fireball" (a ghast's). */
 	/** How shot up each block is (1: broken), from the host's guns. Server thread. */
 	private static final Map<BlockPos, Float> shotDamage = new HashMap<>();
 	/** The host's own blast going off in Minecraft's world: not reported back to it (it set its own off already). */
@@ -629,6 +717,7 @@ public final class WorldBridge {
 		});
 	}
 
+	/** An explosion in Minecraft's world, for the host. `source`: what exploded or was blown up, e.g. "tnt", "creeper", "fireball" (a ghast's). */
 	public static void onExplosion(final Vec3 center, final float radius, final String source) {
 		if (Passthrough.active && !hostBlast) {
 			Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"explosion\",\"pos\":[%.3f,%.3f,%.3f],\"r\":%.2f,\"src\":\"%s\"}",

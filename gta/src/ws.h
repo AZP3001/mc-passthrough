@@ -28,13 +28,12 @@ private:
 
 	std::string m_host;
 	int m_port = 0;
-	uintptr_t m_socket = ~uintptr_t(0);
+	std::atomic<uintptr_t> m_socket{~uintptr_t(0)}; // (read by the network thread, closed from either)
 	std::atomic<bool> m_connected{false};
 	std::atomic<bool> m_stop{false};
 	std::atomic<int> m_generation{0};
 	std::mutex m_sendLock;
 	std::mutex m_queueLock;
 	std::deque<std::string> m_queue;
-	std::thread m_thread;
 	uint32_t m_maskState = 0x9E3779B9u;
 };

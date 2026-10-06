@@ -47,6 +47,9 @@ You play GTA's story as Steve, with Minecraft's items, blocks, mobs and movement
   it that are still inside GTA's solid world (the wall, the ground under the street) become Minecraft blocks, which are
   the hole's sides. They mine on in the same way, so you can dig under the street or tunnel into a building.
 - A door or another of GTA's things mined is taken away.
+- GTA's cars and people fall into a mined pit (a car when the pit is under all of it) and stand on its floor.
+- Where nothing of Minecraft's is behind a mined spot (a wall mined through into a room GTA never drew), it shows as a
+  dark hole, not GTA's wall.
 - `/clearall` puts all of it back.
 
 **Weapons**
@@ -223,7 +226,9 @@ Also:
 - Arrows stick in people, cars and signs and move with them; arrows and fists break glass where they hit, like a bullet.
 - A swing hits what your crosshair is on (a person, a car, a thing), not everyone round about (the mace's falling smash
   still hits all round). Weapons knock along where you look: look up while hitting and they fly up. Lamp posts, signs,
-  bins and car parts can be hit and launched too, much further with Knockback.
+  bins and car parts can be hit and launched too, much further with Knockback. (GTA's own map objects are never moved
+  themselves, that crashed GTA: the plugin's copy takes the place of one and flies, and the original is back once
+  you're far away or after `/clearall`.)
 - Hold **left** Alt over the inventory to look about; AltGr (typing @ in chat) and the chat itself are left alone.
 - Lava melts cars (tyres pop, the body caves in, it burns and is pushed back out) and street furniture; fire under a car
   sets it alight. Cars by your blocks don't despawn.
@@ -252,9 +257,11 @@ Also:
 | `InvertLook` | `0` | `1`: moving the mouse up looks down |
 | `FreeLook` | `1` | `1`: Minecraft movement looks all the way up and down with its own camera; `0`: GTA's camera |
 | `KeepMinimap` | `0` | `1`: Minecraft's blocks never cover GTA's minimap; `0`: they show there too |
+| `Director` | `0` | `1`: obey the video tools' scripted shots (`tools/video`); leave it off for play |
 
 **ReShade** (Home key in GTA → `MCPassthrough.fx`) has sliders for how Minecraft looks: lighting, gamma, saturation,
-haze, glow, depth bias. `install.sh` resets them to the defaults.
+haze, glow, depth bias. `install.sh` keeps what you set (it only adds the effect to ReShade's list if it isn't there), and
+`install.sh --remove` only removes the files it added itself (listed in `MCPassthrough.installed`).
 
 ## Troubleshooting
 
@@ -265,7 +272,8 @@ haze, glow, depth bias. `install.sh` resets them to the defaults.
 | blocks float or sink | F8 re-levels the ground where you stand |
 | walking feels wrong somewhere | F6 switches to GTA's own walking. It also switches by itself if GTA's floor can't be found |
 | the mouse turns too fast or slow | change `LookSensitivity` in `MCPassthrough.ini`, then F8 |
-| a mission needs GTA's guns | Tab switches Steve's hands to GTA's weapons |
+| a mission needs GTA's guns | In a mission, drawing Minecraft's bow aims GTA's gun along with it (the prologue's hostages react). Tab switches Steve's hands to GTA's weapons |
+| "GTA failed during ..." on screen | that frame was skipped and the plugin carries on; send `MCPassthrough.log` (it names the step that failed) |
 | something doesn't work (leads, stops while walking, ...) | send `MCPassthrough.log` from the GTA folder: it lists every lead click and what it hit, each time Minecraft's player was put back (and why), ground re-levels and `/kill` results |
 
 ---
@@ -320,7 +328,7 @@ pitch = −pitch. The script picks yOffset so the ground where the player stands
 | `gta/tests/` | `check_natives.py` (every native's hash and argument count against the native DB), `fakegta.cpp`, `ws_test.cpp` |
 | `tests/sim/` | a GTA simulator: the script compiled on Linux against a box world, with mocked natives |
 | `tests/*.py`, `tests/RigCheck.java` | Minecraft-side integration tests (a fake GTA over the link) and the rig maths check |
-| `host/`, `video/` | older test tools and the video/director pipeline |
+| `tools/host/`, `tools/video/` | older test tools and the video/director pipeline (the plugin obeys the director only with `Director=1` in MCPassthrough.ini) |
 | `dist/passthrough-0.1.0.jar` | the built Minecraft mod |
 
 ## Requirements

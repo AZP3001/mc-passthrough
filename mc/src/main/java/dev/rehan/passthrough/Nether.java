@@ -52,6 +52,8 @@ public final class Nether {
 	private static int bottomY, topY, minA, maxA, planeC;
 	private static Direction.Axis axis = Direction.Axis.X;
 	private static double centerX, centerZ;
+	/** The Nether's own mobs. */
+	static final String TAG = "passthrough_nether";
 	/** Every block the Nether changed, with what was there before (put back on stop). */
 	private static final Map<BlockPos, BlockState> changed = new LinkedHashMap<>();
 	private static final List<int[]> columns = new ArrayList<>(); // {x, z, order key * 1000}
@@ -391,6 +393,7 @@ public final class Nether {
 			Entity e = type.get().spawn(level, at, EntitySpawnReason.COMMAND);
 			if (e instanceof Mob mob) {
 				mob.setPersistenceRequired();
+				mob.addTag(TAG); // (the Nether's own: only these go when it closes)
 				fighters++;
 			}
 		}
@@ -467,7 +470,7 @@ public final class Nether {
 				}
 			}
 
-			BlockPos inside = spansZ ? new BlockPos(bx, y0 + 1, bz) : new BlockPos(bx, y0 + 1, bz);
+			BlockPos inside = new BlockPos(bx, y0 + 1, bz); // (the frame's first inside column, either way it spans)
 			level.setBlock(inside, Blocks.FIRE.defaultBlockState(), Block.UPDATE_ALL); // lights it (a valid frame)
 		});
 	}
@@ -492,12 +495,27 @@ public final class Nether {
 				onBlockChanged(p, changed.get(p));
 			}
 
-			for (BlockPos p : new ArrayList<>(hot.keySet())) {
-				if (hotKind(level.getBlockState(p)) != null) {
-					level.setBlock(p, Blocks.AIR.defaultBlockState(), FLAGS);
+			// fires its lava started round about (in the Nether's own area) go out; lava, fire and magma the player put
+			// down stays
+			if (!changed.isEmpty()) {
+				int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE, z0 = Integer.MAX_VALUE, x1 = Integer.MIN_VALUE, y1 = Integer.MIN_VALUE, z1 = Integer.MIN_VALUE;
+				for (BlockPos p : changed.keySet()) {
+					x0 = Math.min(x0, p.getX());
+					y0 = Math.min(y0, p.getY());
+					z0 = Math.min(z0, p.getZ());
+					x1 = Math.max(x1, p.getX());
+					y1 = Math.max(y1, p.getY());
+					z1 = Math.max(z1, p.getZ());
 				}
 
-				onBlockChanged(p, Blocks.AIR.defaultBlockState());
+				for (BlockPos p : new ArrayList<>(hot.keySet())) {
+					BlockState here = level.getBlockState(p);
+					if (p.getX() >= x0 - 2 && p.getX() <= x1 + 2 && p.getY() >= y0 - 2 && p.getY() <= y1 + 4 && p.getZ() >= z0 - 2
+						&& p.getZ() <= z1 + 2 && here.getBlock() instanceof net.minecraft.world.level.block.BaseFireBlock) {
+						level.setBlock(p, Blocks.AIR.defaultBlockState(), FLAGS);
+						onBlockChanged(p, Blocks.AIR.defaultBlockState());
+					}
+				}
 			}
 
 			// close the portal (the frame stays): lighting it again opens the Nether again
@@ -517,7 +535,13 @@ public final class Nether {
 			columns.clear();
 			active = false;
 			pendingPortal = null;
-			MobWar.discardFighters(level);
+			List<Entity> mine = new ArrayList<>();
+			level.getAllEntities().forEach(e -> {
+				if (e.entityTags().contains(TAG)) {
+					mine.add(e);
+				}
+			});
+			mine.forEach(Entity::discard); // (its own mobs only: the player's and the overworld's stay)
 			if (wasOpen) {
 				WorldBridge.command("time set noon");
 			}

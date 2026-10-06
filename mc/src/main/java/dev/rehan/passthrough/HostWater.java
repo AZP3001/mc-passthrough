@@ -29,7 +29,22 @@ public final class HostWater {
 
 	/** {x, z, bottom y, surface y * 256, ...}: the host's water over these columns (surface <= bottom: none). Any thread. */
 	public static void update(final int[] c) {
-		Long2LongOpenHashMap next = new Long2LongOpenHashMap(columns);
+		if (c.length < 4) {
+			return;
+		}
+
+		// (columns far from these new ones dropped as it's copied: the host sends them again on the way back. Kept
+		// them all, it grew for ever and every update copied all of it)
+		Long2LongOpenHashMap next = new Long2LongOpenHashMap();
+		int cx = c[0], cz = c[1];
+		for (Long2LongMap.Entry e : columns.long2LongEntrySet()) {
+			long k = e.getLongKey();
+			int x = (int) (k >> 32), z = (int) k;
+			if (Math.abs(x - cx) <= 256 && Math.abs(z - cz) <= 256) {
+				next.put(k, e.getLongValue());
+			}
+		}
+
 		for (int i = 0; i + 3 < c.length; i += 4) {
 			long k = key(c[i], c[i + 1]);
 			if (c[i + 3] <= c[i + 2] * 256) {

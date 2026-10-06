@@ -64,12 +64,12 @@ abstract class EntityPickMixin {
 				if (h.length >= 8 && (h[7] == 0.0 || h[7] == 3.0) && self.getMainHandItem().is(ItemTags.PICKAXES)) {
 					BlockPos cell = BlockPos.containing(at.x - face.getStepX() * 0.02, at.y - face.getStepY() * 0.02, at.z - face.getStepZ() * 0.02);
 					// (its face at or just in front of the host's: the cracks on it aren't hidden behind the host's wall)
-					HostDig.aim(cell, face, (int) Math.floor(inFront(cell, face, at) * 16.0), (int) h[6]);
+					HostDig.aim(cell, face, (int) Math.floor(inFront(cell, face, at) * 16.0), (int) h[6], h[7] == 3.0);
 					cir.setReturnValue(new BlockHitResult(at, face, cell, false));
 					return;
 				}
 
-				HostDig.aim(null, face, 0, 0);
+				HostDig.aim(null, face, 0, 0, false);
 				BlockPos cell = BlockPos.containing(at.x + face.getStepX() * 0.5, at.y + face.getStepY() * 0.5, at.z + face.getStepZ() * 0.5);
 				cir.setReturnValue(new BlockHitResult(at, face, cell, false));
 				return;
@@ -78,7 +78,7 @@ abstract class EntityPickMixin {
 
 		// (on the piece being mined: it stays; on anything else, it goes)
 		if (!(own instanceof BlockHitResult b && own.getType() == HitResult.Type.BLOCK && self.level().getBlockState(b.getBlockPos()).getBlock() instanceof HostSurfaceBlock)) {
-			HostDig.aim(null, Direction.UP, 0, 0);
+			HostDig.aim(null, Direction.UP, 0, 0, false);
 		}
 
 		cir.setReturnValue(own);

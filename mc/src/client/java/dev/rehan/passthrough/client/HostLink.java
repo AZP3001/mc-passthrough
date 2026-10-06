@@ -60,6 +60,14 @@ public final class HostLink extends WebSocketServer {
 
 	@Override
 	public void onOpen(final WebSocket conn, final ClientHandshake handshake) {
+		// a web page open in a browser (browsers always say where the page is from; the host's plugin never does) can't
+		// run commands in Minecraft and the host's world
+		if (handshake.hasFieldValue("Origin")) {
+			Passthrough.LOG.warn("refused a link from a web page ({})", handshake.getFieldValue("Origin"));
+			conn.close(1008, "not the host");
+			return;
+		}
+
 		Passthrough.LOG.info("host connected from {}", conn.getRemoteSocketAddress());
 		HostDig.reset(); // (a host starting afresh knows of nothing mined)
 		conn.send(String.format(Locale.ROOT, "{\"t\":\"hello\",\"v\":1,\"shm\":\"%s\",\"pid\":%d}", FrameExporter.NAME.replace("\\", "\\\\"), ProcessHandle.current().pid()));
@@ -83,10 +91,15 @@ public final class HostLink extends WebSocketServer {
 					HostWater.clear();
 				}
 				case "gwater" -> HostWater.update(ints(m.getAsJsonArray("c")));
+				case "waypoint" -> {
+					int[] w = m.has("c") ? ints(m.getAsJsonArray("c")) : new int[0];
+					WorldBridge.waypoint(w.length >= 3 ? new net.minecraft.core.BlockPos(w[0], w[1], w[2]) : null);
+				}
 				case "mobkill" -> HostBridge.mobKill(ints(m.getAsJsonArray("ids")));
 				case "mobfire" -> HostBridge.mobFire(ints(m.getAsJsonArray("ids")));
 				case "gtafire" -> HostBridge.hostFires(ints(m.getAsJsonArray("p")));
-				case "cmd" -> WorldBridge.command(m.get("c").getAsString());
+				// (the mod's own commands; "chat": as if the player typed it, so it reaches the host too: /kill @e, /time)
+				case "cmd" -> WorldBridge.command(m.get("c").getAsString(), m.has("chat") && m.get("chat").getAsBoolean());
 				case "gta", "gtastate", "gtainfo", "director" -> this.relay(conn, message);
 				case "blocksync" -> WorldBridge.sync(m.has("r") ? m.get("r").getAsInt() : 48);
 				case "projhit" -> {

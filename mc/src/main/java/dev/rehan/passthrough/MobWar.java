@@ -71,7 +71,9 @@ public final class MobWar {
 	 * permanent hidden invisibility effect keeps that flag set: Minecraft resets it on sync otherwise).
 	 */
 	public static boolean isProxy(final Entity e) {
-		return e instanceof Villager && (e.isInvisible() || e.entityTags().contains(PROXY_TAG));
+		// (on the client also silent and without AI, as only a stand-in is: not just any invisible villager)
+		return e instanceof Villager v && (v.entityTags().contains(PROXY_TAG)
+			|| (v.level().isClientSide() && v.isInvisible() && v.isSilent() && v.isNoAi()));
 	}
 
 	/** Mobs that join the fight: hostile, goal-driven ones. */

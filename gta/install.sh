@@ -1,6 +1,7 @@
 #!/bin/bash
 # Install the passthrough into GTA V Legacy (story mode): ScriptHookV + its ASI loader, MCPassthrough.asi and
-# ReShade with MCPassthrough.fx. Only adds files; `install.sh --remove` deletes exactly those.
+# ReShade with MCPassthrough.fx. Only adds files; `install.sh --remove` deletes exactly the ones it added (listed in
+# MCPassthrough.installed in the game folder): your own ReShade.ini and preset stay.
 # ReShade goes in as ReShade64.asi, loaded by the ASI loader: GTA loads the system dxgi.dll, so a ReShade dxgi.dll
 # in the game folder never runs.
 # ScriptHookV only runs with BattlEye off (Rockstar launcher setting, or -nobattleye), i.e. story mode only.
@@ -36,8 +37,15 @@ GTA=${GTA_DIR:?GTA V Legacy not found in your Steam libraries: set GTA_DIR to th
 case $GTA in [A-Za-z]:*) GTA=$(wslpath -u "$GTA") ;; esac
 
 [ -f "$GTA/GTA5.exe" ] || { echo "GTA5.exe not found in: $GTA"; exit 1; }
+MANIFEST="$GTA/MCPassthrough.installed"
 if [ "$1" = "--remove" ]; then
-	for f in "${FILES[@]}"; do rm -fv "$GTA/$f"; done
+	if [ -f "$MANIFEST" ]; then
+		while IFS= read -r f; do [ -n "$f" ] && rm -fv "$GTA/$f"; done < <(tr -d '\r' < "$MANIFEST")
+		rm -f "$MANIFEST"
+	else
+		# (installed before the list was kept: only what is the passthrough's own)
+		for f in MCPassthrough.asi reshade-shaders/Shaders/MCPassthrough.fx; do rm -fv "$GTA/$f"; done
+	fi
 	rmdir "$GTA/reshade-shaders/Shaders" "$GTA/reshade-shaders" 2>/dev/null || true
 	exit 0
 fi
@@ -49,6 +57,10 @@ clash=
 [ ! -f "$GTA/ReShade64.asi" ] || cmp -s "$RUNTIME/ReShade64.dll" "$GTA/ReShade64.asi" || clash+=" ReShade64.asi"
 [ ! -f "$GTA/args.txt" ] || [ "$(cat "$GTA/args.txt")" = "$ARGS" ] || clash+=" args.txt"
 [ -z "$clash" ] || [ -n "$FORCE" ] || { echo "not replacing what is already in $GTA:$clash (FORCE=1 to replace)"; exit 1; }
+# what this install adds (not what was there before it): --remove takes only these away again
+for f in "${FILES[@]}"; do
+	[ -e "$GTA/$f" ] || grep -qxF "$f" "$MANIFEST" 2>/dev/null || echo "$f" >> "$MANIFEST"
+done
 cp -v "$RUNTIME/ScriptHookV.dll" "$RUNTIME/dinput8.dll" "$BUILD/MCPassthrough.asi" "$GTA/"
 # the plugin's settings (yours stay if you changed them): mouse look in Minecraft's movement
 [ -f "$GTA/MCPassthrough.ini" ] || printf '[Minecraft]\r\n; how fast the mouse turns the view in Minecraft movement (1.0 normal, 2.0 twice as fast)\r\nLookSensitivity=1.0\r\n; 1: moving the mouse up looks down\r\nInvertLook=0\r\n; 1: Minecraft movement looks all the way up and down; 0: GTA'"'"'s own camera\r\nFreeLook=1\r\n; 1: Minecraft blocks never cover the GTA minimap (0: blocks show there too)\r\nKeepMinimap=0\r\n' > "$GTA/MCPassthrough.ini"
@@ -61,6 +73,16 @@ if [ ! -f "$GTA/ReShade.ini" ]; then
 	printf '[GENERAL]\r\nEffectSearchPaths=.\\reshade-shaders\\Shaders\\\r\nTextureSearchPaths=.\\reshade-shaders\\Textures\\\r\nPresetPath=.\\ReShadePreset.ini\r\nPreprocessorDefinitions=RESHADE_DEPTH_INPUT_IS_REVERSED=1,RESHADE_DEPTH_INPUT_IS_UPSIDE_DOWN=0,RESHADE_DEPTH_INPUT_IS_LOGARITHMIC=0,RESHADE_DEPTH_LINEARIZATION_FAR_PLANE=1000\r\n\r\n[OVERLAY]\r\nTutorialProgress=4\r\nShowClock=0\r\nShowFPS=0\r\n\r\n[SCREENSHOT]\r\nSavePath=.\\\r\n' > "$GTA/ReShade.ini"
 fi
 # the technique is always on; its McActive uniform (set by the add-on) keeps it a pure passthrough until
-# Minecraft frames arrive
-printf 'Techniques=MCPassthrough@MCPassthrough.fx\r\nTechniqueSorting=MCPassthrough@MCPassthrough.fx\r\n' > "$GTA/ReShadePreset.ini"
+# Minecraft frames arrive. An existing preset keeps everything in it (the effect's sliders, other effects): only the
+# technique is added to its list if it isn't there
+PRESET="$GTA/ReShadePreset.ini"
+if [ ! -f "$PRESET" ]; then
+	printf 'Techniques=MCPassthrough@MCPassthrough.fx\r\nTechniqueSorting=MCPassthrough@MCPassthrough.fx\r\n' > "$PRESET"
+elif ! grep -q '^Techniques=.*MCPassthrough@MCPassthrough.fx' "$PRESET"; then
+	if grep -q '^Techniques=' "$PRESET"; then
+		sed -i 's/\r$//; s/^Techniques=\(.\+\)$/Techniques=\1,MCPassthrough@MCPassthrough.fx/; s/^Techniques=$/Techniques=MCPassthrough@MCPassthrough.fx/; s/$/\r/' "$PRESET"
+	else
+		printf 'Techniques=MCPassthrough@MCPassthrough.fx\r\n' | cat - "$PRESET" > "$PRESET.new" && mv "$PRESET.new" "$PRESET"
+	fi
+fi
 echo "installed into $GTA"

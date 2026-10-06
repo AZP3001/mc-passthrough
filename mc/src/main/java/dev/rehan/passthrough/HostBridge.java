@@ -63,9 +63,17 @@ public final class HostBridge {
 
 	/** Server thread: an entity appeared. One of the shared animals turns into the host's own (next tick). */
 	static void onEntityLoad(final Entity e, final ServerLevel level) {
-		if (Passthrough.active && level == level.getServer().overworld() && ANIMALS.containsKey(path(e))) {
+		if (Passthrough.active && level == level.getServer().overworld() && ANIMALS.containsKey(path(e)) && !kept(e)) {
 			toConvert.add(e);
 		}
+	}
+
+	/** One the player cares about (tamed, named, on a lead, ridden, a horse or llama tamed): stays Minecraft's own. */
+	private static boolean kept(final Entity e) {
+		return e.hasCustomName() || e.isVehicle() || e.isPassenger()
+			|| (e instanceof net.minecraft.world.entity.OwnableEntity o && o.getOwnerReference() != null)
+			|| (e instanceof net.minecraft.world.entity.Leashable l && l.isLeashed())
+			|| (e instanceof net.minecraft.world.entity.animal.equine.AbstractHorse h && h.isTamed());
 	}
 
 	private static String path(final Entity e) {
@@ -277,8 +285,11 @@ public final class HostBridge {
 	 * A command typed in Minecraft (before it runs): /kill with @e reaches the host's people and animals too. And after
 	 * it ran: /time and /weather set the host's clock and weather. Server thread.
 	 */
+	/** A command the mod runs itself (WorldBridge.command): Minecraft's only. Server thread. */
+	public static boolean internal;
+
 	public static void command(final MinecraftServer s, final String command, final boolean after) {
-		if (!Passthrough.active) {
+		if (!Passthrough.active || internal) {
 			return;
 		}
 
@@ -294,18 +305,60 @@ public final class HostBridge {
 					return;
 				}
 
-				// @e: everyone; @e[type=cow]: the host's cows; @e[type=villager] or a zombie: its people
-				String what = "all";
-				int at = words[1].indexOf("type=");
-				if (at >= 0) {
-					String type = words[1].substring(at + 5).split("[,\\]]")[0].replace("minecraft:", "");
-					String model = ANIMALS.get(type);
-					what = type.startsWith("!") ? "all" // (everything but that type)
-						: model != null ? model : type.equals("villager") || type.contains("zombie") ? "people" : "none";
+				// @e: everyone; @e[type=cow]: the host's cows; @e[type=villager] or a zombie: its people; type=!x: all but
+				// those; distance=..r (or a..b) and limit=n as Minecraft's own (nearest first)
+				String args = words[1].length() > 3 && words[1].charAt(2) == '[' ? words[1].substring(3, words[1].length() - (words[1].endsWith("]") ? 1 : 0)) : "";
+				String what = "all", not = "";
+				double near = 0.0, far = 250.0;
+				int limit = Integer.MAX_VALUE;
+				for (String arg : args.split(",")) {
+					String[] kv = arg.split("=", 2);
+					if (kv.length < 2) {
+						continue;
+					}
+
+					String key = kv[0].trim(), value = kv[1].trim();
+					switch (key) {
+						case "type" -> {
+							boolean but = value.startsWith("!");
+							String type = (but ? value.substring(1) : value).replace("minecraft:", "");
+							String model = ANIMALS.get(type);
+							String host = model != null ? model : type.equals("villager") || type.contains("zombie") ? "people" : "none";
+							if (but) {
+								not = host; // ("none": nothing of the host's is excluded)
+							} else {
+								what = host;
+							}
+						}
+						case "distance" -> {
+							try {
+								int dots = value.indexOf("..");
+								if (dots < 0) {
+									near = far = Double.parseDouble(value);
+								} else {
+									near = dots == 0 ? 0.0 : Double.parseDouble(value.substring(0, dots));
+									far = dots + 2 >= value.length() ? 250.0 : Double.parseDouble(value.substring(dots + 2));
+								}
+							} catch (NumberFormatException ignored) {
+								what = "none";
+							}
+						}
+						case "limit" -> {
+							try {
+								limit = Integer.parseInt(value);
+							} catch (NumberFormatException ignored) {
+								what = "none";
+							}
+						}
+						default -> {
+						}
+					}
 				}
 
-				if (!what.equals("none")) {
-					Passthrough.events.accept("{\"t\":\"gtacmd\",\"c\":\"kill\",\"what\":\"" + what + "\"}");
+				if (!what.equals("none") && limit > 0) {
+					Passthrough.events.accept(String.format(Locale.ROOT,
+						"{\"t\":\"gtacmd\",\"c\":\"kill\",\"what\":\"%s\",\"not\":\"%s\",\"r0\":%.2f,\"r\":%.2f,\"limit\":%d}", what,
+						not.equals("none") ? "" : not, near, Math.min(far, 250.0), Math.min(limit, 100000)));
 				}
 			}
 			case "time" -> {

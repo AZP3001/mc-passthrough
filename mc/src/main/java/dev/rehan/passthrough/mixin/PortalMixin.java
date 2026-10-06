@@ -16,7 +16,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 abstract class PortalMixin {
 	@Inject(method = "setAsInsidePortal(Lnet/minecraft/world/level/block/Portal;Lnet/minecraft/core/BlockPos;)V", at = @At("HEAD"), cancellable = true)
 	private void passthrough$noTravel(final Portal portal, final BlockPos pos, final CallbackInfo ci) {
-		if (!((Entity) (Object) this).level().isClientSide()) {
+		// (without the host attached, Minecraft's own portals work as ever)
+		if (dev.rehan.passthrough.Passthrough.active && !((Entity) (Object) this).level().isClientSide()) {
 			ci.cancel();
 		}
 	}

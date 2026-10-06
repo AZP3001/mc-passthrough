@@ -15,12 +15,14 @@
 #include <algorithm>
 #include <atomic>
 #include <climits>
+#include <cctype>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cwctype>
+#include <functional>
 #include <string>
 #include <map>
 #include <set>
@@ -42,6 +44,7 @@ namespace
 	// Tab: Steve's hands hold GTA's own weapons (aim, shoot, mouse wheel and number keys pick one) instead of
 	// Minecraft's items (then GTA's mouse buttons, wheel and number keys go to Minecraft)
 	bool g_gtaHands = false;
+	bool g_missionAim = false; // GTA's player aims its gun along with Minecraft's drawn bow (in a mission)
 	Hash g_gtaWeapon = 0; // the GTA weapon to take out again
 	// Police mode: a wanted level that stays (director)
 	bool g_police = false;
@@ -95,6 +98,7 @@ namespace
 		bool invertLook = false;
 		bool freeLook = true;
 		bool keepMinimap = false; // Minecraft's world never covers GTA's minimap (off: blocks show there too)
+		bool director = false;    // the video tools' scripted shots ({"t":"gta","op":...}) obeyed (Director=1; off for play)
 	} g_settings;
 	int g_spaceDownAt = INT_MAX; // Space held since then (held at a ledge too high to jump, GTA climbs it)
 	// A car flying with Steve (Minecraft's movement on, in the driver's seat, Space twice): Minecraft flies the player
@@ -396,6 +400,8 @@ namespace
 	void world_mobs_message(const std::string &m);
 	void leash_use(Ped player, const std::string &m);
 	float entity_mass(Entity e);
+	bool world_probe(Entity ignore, float x0, float y0, float z0, float x1, float y1, float z1, int flags, int options, Vector3 &at,
+		Vector3 &normal, Entity &entity, Hash &material);
 	void dug_message(const std::string &m);
 	void dig_clear();
 	void leash_gone(int id);
@@ -403,6 +409,149 @@ namespace
 	void animal_message(const std::string &m);
 	void command_message(Ped player, const std::string &m);
 	void enderthief_message(Ped player, const std::string &m);
+
+	// ---- GTA's own objects moved: the plugin's copies ----
+	// The map's own objects (signs, bins, lamp posts, benches, doors) can't be woken, freed or pushed by a script: GTA
+	// crashed doing it ("GTA failed during Minecraft's melee"). One knocked loose, tied to a lead, hooked or burnt is
+	// swapped for the plugin's own copy (the map's hidden meanwhile), which moves as anything does. Put back as it was
+	// when the player is far off, and by /clearall.
+	struct LooseCopy
+	{
+		Object copy;   // 0: gone (burnt away, mined): the map's own stays hidden till the player is far off
+		Hash model;
+		float x, y, z; // where the map's own stands (hidden)
+	};
+	std::vector<LooseCopy> g_loose;
+	constexpr size_t kMaxLoose = 48;
+
+	bool is_loose(Entity e)
+	{
+		for (const LooseCopy &c : g_loose)
+			if (c.copy != 0 && Entity(c.copy) == e)
+				return true;
+		return false;
+	}
+
+	/// One of the plugin's copies deleted by the plugin itself (burnt away, mined): the map's own isn't back till the
+	/// player is far off.
+	void loose_gone(Entity e)
+	{
+		for (LooseCopy &c : g_loose)
+			if (c.copy != 0 && Entity(c.copy) == e)
+				c.copy = 0;
+	}
+
+	void loose_restore(LooseCopy &c)
+	{
+		natives::RemoveModelHide(c.x, c.y, c.z, 0.3f, c.model);
+		if (c.copy != 0 && natives::DoesEntityExist(c.copy))
+			natives::DeleteObject(&c.copy);
+		c.copy = 0;
+	}
+
+	/// What can be moved for GTA object `e`: the plugin's copy in place of one of the map's own (made now if need be), a
+	/// script's own object itself, or 0 for nothing to move (not an object, carried, a pickup, one of Minecraft's blocks,
+	/// Steve's gun, heavier than `maxKg`).
+	Object loosen(Entity e, float maxKg = 1e9f)
+	{
+		if (e == 0 || !natives::DoesEntityExist(e) || natives::GetEntityType(e) != 3)
+			return 0;
+		if (is_loose(e))
+			return Object(e);
+		if (g_props.handles.count(e) || Object(e) == g_gunFit.held || natives::IsEntityAttached(e) || natives::IsObjectAPickup(Object(e)) ||
+			natives::IsObjectAPortablePickup(Object(e)))
+			return 0;
+		if (natives::IsEntityAMissionEntity(e))
+			return Object(e); // (a script's own: made to be moved)
+		const Hash model = natives::GetEntityModel(e);
+		if (model == 0 || !natives::IsModelValid(model) || entity_mass(e) > maxKg)
+			return 0;
+		if (!natives::HasModelLoaded(model))
+		{
+			natives::RequestModel(model); // (on screen it's loaded; else next time)
+			return 0;
+		}
+		if (g_loose.size() >= kMaxLoose)
+		{
+			// the oldest put back first (GTA's pool of script objects is small)
+			loose_restore(g_loose.front());
+			g_loose.erase(g_loose.begin());
+		}
+		const Vector3 at = natives::GetEntityCoords(e, FALSE), rot = natives::GetEntityRotation(e);
+		const Object copy = natives::CreateDynamicObject(model, at.x, at.y, at.z);
+		if (copy == 0 || !natives::DoesEntityExist(copy))
+			return 0;
+		natives::SetEntityRotation(copy, rot.x, rot.y, rot.z);
+		natives::CreateModelHideExcludingScriptObjects(at.x, at.y, at.z, 0.3f, model);
+		g_loose.push_back({copy, model, at.x, at.y, at.z});
+		logf("loose: map object %d (model %08X) at %.1f %.1f %.1f swapped for copy %d", int(e), unsigned(model), at.x, at.y, at.z, int(copy));
+		return copy;
+	}
+
+	/// Whether GTA object `e` may be pushed as it is (the plugin's copy, or a script's own: not one of the map's).
+	bool movable_object(Entity e)
+	{
+		return e != 0 && (is_loose(e) || (natives::IsEntityAMissionEntity(e) && !g_props.handles.count(e)));
+	}
+
+	/// Now and then: copies far from the player put back, the map's own showing again where it stood.
+	void loose_tick(Ped player)
+	{
+		static int next = 0;
+		const int now = natives::GetGameTimer();
+		if (g_loose.empty() || now < next)
+			return;
+		next = now + 1000;
+		const Vector3 me = natives::GetEntityCoords(player, TRUE);
+		for (size_t i = 0; i < g_loose.size();)
+		{
+			LooseCopy &c = g_loose[i];
+			if (c.copy != 0 && !natives::DoesEntityExist(c.copy))
+				c.copy = 0; // (gone: the map's own isn't back till the player is far off)
+			const float dx = c.x - me.x, dy = c.y - me.y;
+			if (dx * dx + dy * dy < 150.0f * 150.0f)
+			{
+				++i;
+				continue;
+			}
+			loose_restore(c);
+			g_loose.erase(g_loose.begin() + i);
+		}
+	}
+
+	void loose_clear()
+	{
+		for (LooseCopy &c : g_loose)
+			loose_restore(c);
+		g_loose.clear();
+	}
+
+	// Things waiting on GTA (a model still loading): tried again each frame for up to 5 s, never waited for inside a
+	// frame (that froze everything: no camera for Minecraft, no walking)
+	std::vector<std::pair<int, std::function<void()>>> g_later;
+	int g_laterDeadline = 0;
+
+	void later(std::function<void()> retry)
+	{
+		g_later.push_back({g_laterDeadline != 0 ? g_laterDeadline : natives::GetGameTimer() + 5000, std::move(retry)});
+	}
+
+	void later_tick()
+	{
+		if (g_later.empty())
+			return;
+		const int now = natives::GetGameTimer();
+		auto due = std::move(g_later);
+		g_later.clear();
+		for (auto &[deadline, retry] : due)
+			if (now < deadline)
+			{
+				g_laterDeadline = deadline;
+				retry();
+			}
+		g_laterDeadline = 0;
+	}
+
 	// /gta's toggles: GTA's cheats, kept on every frame (cheats_tick)
 	struct Cheats
 	{
@@ -419,7 +568,39 @@ namespace
 	bool g_mcScoping = false;  // Minecraft's player looks through a spyglass (the camera zooms in)
 	bool g_mapLocked = false;  // the minimap turned by our camera (GTA's turns by its own only)
 	bool g_mcTotem = false;    // Minecraft's player holds a totem of undying (it saves GTA's player from dying)
+	// While a totem is held, GTA's player has this much hidden health on top (a one-hit death, a blast or a sniper,
+	// takes it below its real health, and the totem saves it there): its real health is GTA's less this
+	int g_totemBuffer = 0;
+	Ped g_totemPed = 0;
+	constexpr int kTotemBuffer = 2000;
+
+	int real_health(Ped p)
+	{
+		return natives::GetEntityHealth(p) - (p == g_totemPed ? g_totemBuffer : 0);
+	}
+
+	int real_max_health(Ped p)
+	{
+		return natives::GetEntityMaxHealth(p) - (p == g_totemPed ? g_totemBuffer : 0);
+	}
+
+	/// The hidden health off again (the totem used, put away, or god mode): GTA's player as it really is.
+	void totem_unbuffer()
+	{
+		if (g_totemBuffer == 0)
+			return;
+		if (natives::DoesEntityExist(g_totemPed))
+		{
+			const int hp = natives::GetEntityHealth(g_totemPed) - g_totemBuffer;
+			natives::SetEntityMaxHealth(g_totemPed, natives::GetEntityMaxHealth(g_totemPed) - g_totemBuffer);
+			if (!natives::IsEntityDead(g_totemPed))
+				natives::SetEntityHealth(g_totemPed, std::max(101, hp));
+		}
+		g_totemBuffer = 0;
+		g_totemPed = 0;
+	}
 	bool g_mcBlocking = false; // Minecraft's player holds up a shield (bullets and blows from the front don't hurt)
+	bool g_proofsDirty = false; // GTA's player's proofs were reset (F9 off): the shield's and fire resistance's again
 	std::string g_mcEffects; // Minecraft's effects on its player: "speed:1,jump_boost:0,..." (effect:amplifier)
 	void summon(Ped player, std::string what);
 	void dent_vehicle(Vehicle v, const Vector3 &at, float damage, float radius);
@@ -458,11 +639,22 @@ namespace
 	void sendf(const char *format, ...)
 	{
 		char buffer[8192];
-		va_list args;
+		va_list args, again;
 		va_start(args, format);
-		vsnprintf(buffer, sizeof(buffer), format, args);
+		va_copy(again, args);
+		const int len = vsnprintf(buffer, sizeof(buffer), format, args);
 		va_end(args);
-		g_ws.send(buffer);
+		if (len >= int(sizeof(buffer)))
+		{
+			// (a long one whole, not cut off into broken JSON)
+			std::string big(size_t(len) + 1, '\0');
+			vsnprintf(big.data(), big.size(), format, again);
+			big.resize(size_t(len));
+			g_ws.send(big);
+		}
+		else if (len > 0)
+			g_ws.send(buffer);
+		va_end(again);
 	}
 
 	/// Steve stands in for GTA's player: hide it (again, if a mission showed it), or give back the one we hid.
@@ -480,6 +672,23 @@ namespace
 		if (g_hiddenPed != 0 && natives::DoesEntityExist(g_hiddenPed))
 			natives::SetEntityVisible(g_hiddenPed, TRUE, FALSE);
 		g_hiddenPed = 0;
+	}
+
+	/// GTA's water surface over (x, y) between `low` (its bed, or the feet) and `high`, if there's water there. (GET_WATER_HEIGHT
+	/// turns down points well above the water, and knows nothing of rivers: asked at a few heights, then GTA's probe
+	/// against all its water, rivers too.)
+	bool water_surface(float x, float y, float low, float high, float &surface)
+	{
+		for (const float z : {low + 0.5f, low + 3.0f, (low + high) * 0.5f, high})
+			if (natives::GetWaterHeight(x, y, z, &surface) && surface > low)
+				return true;
+		float h = 0.0f;
+		if (natives::TestProbeAgainstAllWater(x, y, high, x, y, low, 1, &h) == 1 && h > low && h < high + 5.0f)
+		{
+			surface = h;
+			return true;
+		}
+		return false;
 	}
 
 	/// Find the ground under columns around the player that haven't been sampled yet (or only from another floor of
@@ -502,6 +711,20 @@ namespace
 		}
 		const int px = int(std::floor(player.x)), pz = int(std::floor(-player.y));
 		const float feet = player.z - 1.0f;
+		{
+			// columns far behind forgotten now and then (probed again on the way back): it grew for ever
+			static int nextPrune = 0;
+			const int now = natives::GetGameTimer();
+			if (now >= nextPrune)
+			{
+				nextPrune = now + 10000;
+				for (auto it = g_sampled.begin(); it != g_sampled.end();)
+				{
+					const int x = int(it->first >> 32), z = int(uint32_t(it->first));
+					it = std::abs(x - px) > 200 || std::abs(z - pz) > 200 ? g_sampled.erase(it) : std::next(it);
+				}
+			}
+		}
 		std::string columns, water;
 		int probes = 0;
 		const Ped ped = natives::PlayerPedId();
@@ -521,7 +744,7 @@ namespace
 				// no seabed found under deep water (the open sea, a deep dock: GTA hasn't its bottom loaded): still water to
 				// Minecraft, over a bed well down (Minecraft swims and its trident's riptide works there too)
 				float sea = 0.0f;
-				if (!natives::GetWaterHeight(cx, cy, feet + 20.0f, &sea) || sea < feet - 6.0f)
+				if (!water_surface(cx, cy, feet - 6.0f, feet + 20.0f, sea))
 					continue; // collision not streamed in yet: try again later
 				groundZ = std::min(sea, feet) - 14.0f;
 			}
@@ -549,7 +772,7 @@ namespace
 			snprintf(entry, sizeof(entry), "%s%d,%d,%d,%d", columns.empty() ? "" : ",", x, z, top - kGroundDepth + 1, wallTop);
 			columns += entry;
 			float surface = 0.0f;
-			if (natives::GetWaterHeight(cx, cy, feet + 20.0f, &surface) && surface > groundZ + 0.1f)
+			if (water_surface(cx, cy, groundZ, std::max(feet, groundZ) + 20.0f, surface) && surface > groundZ + 0.1f)
 			{
 				snprintf(entry, sizeof(entry), "%s%d,%d,%d,%d", water.empty() ? "" : ",", x, z, top + 1, int((surface + g_yOffset) * 256.0f));
 				water += entry;
@@ -561,21 +784,39 @@ namespace
 			g_ws.send("{\"t\":\"gwater\",\"c\":[" + water + "]}");
 	}
 
-	// Flat JSON objects only (what the director and the mod send), with or without spaces around ':'.
+	/// Past the JSON string starting at p (on its opening quote): just after its closing quote (escapes skipped).
+	const char *json_skip_string(const char *p)
+	{
+		for (++p; *p != '\0' && *p != '"'; ++p)
+			if (*p == '\\' && p[1] != '\0')
+				++p;
+		return *p == '"' ? p + 1 : p;
+	}
+
+	/// The value of `key` in a JSON message (the first one, at any depth), with or without spaces around ':'. Only
+	/// real keys count: a key's name inside some string value (a chat line, a name) isn't one.
 	const char *json_value(const std::string &m, const char *key)
 	{
-		const std::string k = std::string("\"") + key + "\"";
-		for (size_t at = m.find(k); at != std::string::npos; at = m.find(k, at + 1))
+		const size_t keyLen = std::strlen(key);
+		for (const char *p = m.c_str(); *p != '\0';)
 		{
-			const char *p = m.c_str() + at + k.size();
-			while (*p == ' ' || *p == '\t')
+			if (*p != '"')
+			{
+				++p;
+				continue;
+			}
+			const char *start = p + 1, *after = json_skip_string(p);
+			const bool match = size_t(after - start) == keyLen + 1 && std::strncmp(start, key, keyLen) == 0;
+			p = after;
+			while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
 				++p;
 			if (*p != ':')
-				continue;
+				continue; // (a string value, not a key)
 			++p;
-			while (*p == ' ' || *p == '\t')
+			while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
 				++p;
-			return p;
+			if (match)
+				return p;
 		}
 		return nullptr;
 	}
@@ -591,8 +832,48 @@ namespace
 		const char *p = json_value(m, key);
 		if (p == nullptr || *p != '"')
 			return {};
-		const char *end = std::strchr(p + 1, '"');
-		return end ? std::string(p + 1, end) : std::string(p + 1);
+		// (escapes read: a quote or a backslash in it no longer cuts it off there)
+		std::string out;
+		for (++p; *p != '\0' && *p != '"'; ++p)
+		{
+			if (*p != '\\' || p[1] == '\0')
+			{
+				out += *p;
+				continue;
+			}
+			++p;
+			switch (*p)
+			{
+			case 'n': out += '\n'; break;
+			case 't': out += '\t'; break;
+			case 'r': out += '\r'; break;
+			case 'b': out += '\b'; break;
+			case 'f': out += '\f'; break;
+			case 'u':
+			{
+				unsigned c = 0;
+				int n = 0;
+				for (; n < 4 && std::isxdigit(static_cast<unsigned char>(p[1])); ++n, ++p)
+					c = c * 16 + unsigned(std::isdigit(static_cast<unsigned char>(*(p + 1))) ? *(p + 1) - '0' : (std::tolower(*(p + 1)) - 'a' + 10));
+				if (c < 0x80)
+					out += char(c);
+				else if (c < 0x800)
+				{
+					out += char(0xC0 | (c >> 6));
+					out += char(0x80 | (c & 0x3F));
+				}
+				else
+				{
+					out += char(0xE0 | (c >> 12));
+					out += char(0x80 | ((c >> 6) & 0x3F));
+					out += char(0x80 | (c & 0x3F));
+				}
+				break;
+			}
+			default: out += *p; break; // \" \\ \/
+			}
+		}
+		return out;
 	}
 
 	/// Keep GTA's (invisible) player alive, unragdolled and unwanted through Minecraft's explosions.
@@ -622,6 +903,7 @@ namespace
 		natives::SetEntityInvincible(ped, FALSE);
 		natives::SetPlayerInvincible(player, FALSE);
 		natives::SetEntityProofs(ped, FALSE, FALSE, FALSE, FALSE, FALSE);
+		g_proofsDirty = true; // (the shield's and fire resistance's go on again)
 		natives::SetPedCanRagdoll(ped, TRUE);
 		natives::SetMaxWantedLevel(5);
 		natives::SetPoliceIgnorePlayer(player, FALSE);
@@ -992,11 +1274,13 @@ namespace
 		}
 	}
 
-	/// A splash potion broke at `at`: harming and poison hurt the people around, healing and regeneration heal them
-	/// (and the player), slowness and weakness knock them down.
 	// GTA's people and cars a potion made invisible, until when (then they show again)
 	std::unordered_map<Entity, int> g_potionHidden;
+	// GTA's people a speed or slowness potion hit: how fast they move, till when (GTA's own lasts a frame: set every frame)
+	std::unordered_map<Ped, std::pair<float, int>> g_potionPace;
 
+	/// A splash potion broke at `at`: harming and poison hurt the people around, healing and regeneration heal them,
+	/// slowness and weakness knock them down (Minecraft's own player: Minecraft's potion).
 	void potion_splash(Ped player, const Vector3 &at, const std::string &potion)
 	{
 		auto has = [&](const char *k) { return potion.find(k) != std::string::npos; };
@@ -1021,10 +1305,10 @@ namespace
 			if (slow)
 			{
 				natives::SetPedToRagdoll(q, 2500);
-				natives::SetPedMoveRateOverride(q, 0.5f);
+				g_potionPace[q] = {0.5f, now + 20000 * strength};
 			}
 			if (fast)
-				natives::SetPedMoveRateOverride(q, 1.6f);
+				g_potionPace[q] = {1.6f, now + 20000 * strength};
 			if (leap || levitate)
 			{
 				natives::SetPedToRagdoll(q, 2500);
@@ -1072,23 +1356,25 @@ namespace
 				g_potionHidden[v] = now + 30000 * strength;
 			}
 		});
-		const Vector3 me = natives::GetEntityCoords(player, TRUE);
-		const float dx = me.x - at.x, dy = me.y - at.y, dz = me.z - at.z;
-		if (dx * dx + dy * dy + dz * dz < 4.5f * 4.5f)
-		{
-			if (heal)
-				natives::SetEntityHealth(player, natives::GetEntityMaxHealth(player));
-			if (harm && !g_godMode)
-				natives::ApplyDamageToPed(player, 20 * strength);
-		}
+		// (the player: Minecraft applies the potion to its own player, whose hurt or healing comes over as "pdmg"/"pheal")
 	}
 
 	/// The potion-hidden show again when it wears off.
 	void potion_tick()
 	{
+		const int now = natives::GetGameTimer();
+		for (auto it = g_potionPace.begin(); it != g_potionPace.end();)
+		{
+			if (now >= it->second.second || !natives::DoesEntityExist(it->first))
+			{
+				it = g_potionPace.erase(it);
+				continue;
+			}
+			natives::SetPedMoveRateOverride(it->first, it->second.first);
+			++it;
+		}
 		if (g_potionHidden.empty())
 			return;
-		const int now = natives::GetGameTimer();
 		for (auto it = g_potionHidden.begin(); it != g_potionHidden.end();)
 		{
 			if (now < it->second)
@@ -1136,10 +1422,6 @@ namespace
 		return at == std::string::npos ? 0 : std::atoi(sub.c_str() + at + std::strlen(key));
 	}
 
-	/// A Minecraft projectile went from (ax..) to (bx..) this tick (GTA coordinates): if that crosses anything of GTA's,
-	/// it acts there (a firework blows up, an arrow or trident lands a bullet in a person or car or sticks in a wall,
-	/// a potion splashes, a wind charge bursts, ...), and Minecraft is told where (so it ends there too). GTA glass on
-	/// the way shatters and the projectile flies on.
 	// Minecraft's arrows stuck in GTA's people, cars and signs: kept on them (by the nearest bone, for a person)
 	struct StuckArrow
 	{
@@ -1226,6 +1508,10 @@ namespace
 		g_ws.send(out);
 	}
 
+	/// A Minecraft projectile went from where it was to (bx..) this tick (GTA coordinates): if that crosses anything of
+	/// GTA's, it acts there (a firework blows up, an arrow or trident lands a bullet in a person or car or sticks in a
+	/// wall, a potion splashes, a wind charge bursts, ...), and Minecraft is told where (so it ends there too). GTA glass
+	/// on the way shatters and the projectile flies on.
 	bool projectile_segment(Ped ped, int id, const Projectile &pr, float bx, float by, float bz)
 	{
 		BOOL hit = FALSE;
@@ -1289,7 +1575,8 @@ namespace
 			const bool flame = pr.sub.find("fl") != std::string::npos;
 			if (type == 1 || type == 2)
 				natives::ShootSingleBulletBetweenCoords(end.x - ux * 1.0f, end.y - uy * 1.0f, end.z - uz * 1.0f,
-					end.x + ux * 0.6f, end.y + uy * 0.6f, end.z + uz * 0.6f, int((trident ? 450 : 250) * (1.0f + 0.25f * float(power))), kSniper, ped);
+					end.x + ux * 0.6f, end.y + uy * 0.6f, end.z + uz * 0.6f, int((trident ? 450 : 250) * (1.0f + 0.25f * float(power))), kSniper, ped,
+					FALSE); // (silent: an arrow, not a sniper's shot)
 			else
 				stick = true;
 			if (type == 1 && punch > 0)
@@ -1337,9 +1624,13 @@ namespace
 			// hooked a car or a loose thing: dragged a little towards the player
 			const Vector3 me = natives::GetEntityCoords(ped, TRUE);
 			const float hx = me.x - end.x, hy = me.y - end.y, hl = std::max(0.1f, std::sqrt(hx * hx + hy * hy));
-			if (type == 3)
-				natives::SetEntityDynamic(entity, TRUE);
-			natives::ApplyForceToEntity(entity, hx / hl * (type == 2 ? 14.0f : 6.0f), hy / hl * (type == 2 ? 14.0f : 6.0f), type == 2 ? 1.0f : 2.0f);
+			const Entity hooked = type == 3 ? Entity(loosen(entity, 300.0f)) : entity;
+			if (hooked != 0)
+			{
+				if (type == 3)
+					natives::SetEntityDynamic(hooked, TRUE);
+				natives::ApplyForceToEntity(hooked, hx / hl * (type == 2 ? 14.0f : 6.0f), hy / hl * (type == 2 ? 14.0f : 6.0f), type == 2 ? 1.0f : 2.0f);
+			}
 		}
 		else if (pr.kind == "bobber" && type == 1)
 		{
@@ -1368,8 +1659,12 @@ namespace
 			stick = true;
 			if (type == 3)
 			{
-				// a sign, a lamp post: knocked a little (a light thing loose)
-				natives::ApplyForceToEntity(entity, ux * 1.5f, uy * 1.5f, 0.2f);
+				// a sign, a bin: knocked a little (a light thing loose; the map's own as the plugin's copy, it stuck in that)
+				if (const Object o = loosen(entity, 300.0f))
+				{
+					entity = o;
+					natives::ApplyForceToEntity(o, ux * 1.5f, uy * 1.5f, 0.2f);
+				}
 			}
 			arrow_stuck(id, entity, type == 1, sx, sy, sz, ux, uy, uz);
 		}
@@ -1438,7 +1733,11 @@ namespace
 					sub = k.substr(colon + 1);
 					k.resize(colon);
 				}
-				it = g_projectiles.emplace(id, Projectile{me.x, me.y, me.z + 0.4f, k, sub, false, false}).first;
+				// (first seen well away from Steve, after a reconnect or shot by something else: traced from there on, not
+				// from his chest across everything between)
+				const float fx = gx - me.x, fy = gy - me.y, fz = gz - me.z;
+				const bool closeBy = fx * fx + fy * fy + fz * fz < 10.0f * 10.0f; // (a shot flies 3 m a tick: its first report can be that far)
+				it = g_projectiles.emplace(id, Projectile{closeBy ? me.x : gx, closeBy ? me.y : gy, closeBy ? me.z + 0.4f : gz, k, sub, false, false}).first;
 			}
 			Projectile &pr = it->second;
 			pr.seen = true;
@@ -1483,6 +1782,22 @@ namespace
 		natives::TaskCombatPed(crew, target);
 		natives::SetPedKeepTask(crew, TRUE);
 		g_army.push_back(crew);
+	}
+
+	/// GTA's ped type for a model by its name: police (6), army (29) or a civilian (26), so a summoned cop is a cop.
+	int ped_type(const std::string &model)
+	{
+		std::string m = model;
+		for (char &ch : m)
+			ch = char(std::tolower(static_cast<unsigned char>(ch)));
+		for (const char *cop : {"s_m_y_cop", "s_f_y_cop", "s_m_y_sheriff", "s_f_y_sheriff", "s_m_y_hwaycop", "s_m_m_snowcop", "s_m_y_ranger",
+				 "s_f_y_ranger", "csb_cop", "s_m_m_ciasec", "s_m_m_fibsec", "s_m_y_swat"})
+			if (m.rfind(cop, 0) == 0)
+				return 6;
+		for (const char *army : {"s_m_y_marine", "s_m_m_marine", "s_m_y_blackops", "s_m_y_armymech", "s_m_m_pilot"})
+			if (m.rfind(army, 0) == 0)
+				return 29;
+		return 26;
 	}
 
 	Hash army_model(const char *name)
@@ -1913,6 +2228,9 @@ namespace
 				if ((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) < 90.0f * 90.0f)
 					cops.push_back(q);
 			}
+			// (cops gone, or dead, forgotten: the map only grew)
+			for (auto it = g_copTarget.begin(); it != g_copTarget.end();)
+				it = !natives::DoesEntityExist(it->first) || natives::IsPedDeadOrDying(it->first) ? g_copTarget.erase(it) : std::next(it);
 			for (Ped c : cops)
 			{
 				auto current = g_copTarget.find(c);
@@ -1944,7 +2262,7 @@ namespace
 	void sample_patches()
 	{
 		int budget = 120;
-		std::string columns;
+		std::string columns, water;
 		auto patch = [&](float gx, float gy, float gz, int radius) {
 			const int cx = int(std::floor(gx)), cz = int(std::floor(-gy));
 			for (int dx = -radius; dx <= radius && budget > 0; ++dx)
@@ -1956,13 +2274,20 @@ namespace
 						continue;
 					--budget;
 					float groundZ = 0.0f;
-					if (!natives::GetGroundZFor3dCoord(x + 0.5f, -(z + 0.5f), gz + 1.2f, &groundZ, FALSE, FALSE) || groundZ == 0.0f)
+					// (under GTA's water its bed, as sample_ground: the water over it is Minecraft's water, not a floor)
+					if (!natives::GetGroundZFor3dCoord(x + 0.5f, -(z + 0.5f), gz + 1.2f, &groundZ, TRUE, FALSE) || groundZ == 0.0f)
 						continue;
 					g_sampled[column_key(x, z)] = gz;
 					const int top = int(std::floor(groundZ + g_yOffset + 0.5f)) - 1;
 					char entry[64];
 					snprintf(entry, sizeof(entry), "%s%d,%d,%d,%d", columns.empty() ? "" : ",", x, z, top - kGroundDepth + 1, top);
 					columns += entry;
+					float surface = 0.0f;
+					if (water_surface(x + 0.5f, -(z + 0.5f), groundZ, std::max(gz, groundZ) + 20.0f, surface) && surface > groundZ + 0.1f)
+					{
+						snprintf(entry, sizeof(entry), "%s%d,%d,%d,%d", water.empty() ? "" : ",", x, z, top + 1, int((surface + g_yOffset) * 256.0f));
+						water += entry;
+					}
 				}
 		};
 		for (const auto &[id, m] : g_mobs)
@@ -1975,6 +2300,8 @@ namespace
 			}
 		if (!columns.empty())
 			g_ws.send("{\"t\":\"ground\",\"c\":[" + columns + "]}");
+		if (!water.empty())
+			g_ws.send("{\"t\":\"gwater\",\"c\":[" + water + "]}");
 	}
 
 	/// A real blast (grenade, rocket, car, tank shell, propane...) within r of (x, y, z): not a hydrant's or a steam
@@ -2039,7 +2366,16 @@ namespace
 	// GTA's solid world (a wall, the ground under the street) Minecraft fills with its own blocks: the hole's sides.
 	std::unordered_map<int64_t, int> g_dug; // cell -> what it was: 0 rock, 1 soil, 2 sand, 3 wood, 4 metal
 	std::unordered_set<int64_t> g_digFill;
-	std::vector<Entity> g_dugThings;        // doors and other things mined away (hidden till /clearall)
+	// the filling cells wholly under GTA's ground (a pit's floor and sides): GTA's cars and people stand on them, as on
+	// Minecraft's own blocks (an unseen prop each)
+	std::unordered_set<int64_t> g_digSolid;
+	std::unordered_map<Entity, int> g_pitFalls; // GTA's cars and people dropping into a mined pit (collision off): since when
+	struct DugThing
+	{
+		Hash model;
+		float x, y, z; // the map's own, hidden where it stood (CREATE_MODEL_HIDE)
+	};
+	std::vector<DugThing> g_dugThings;      // doors and other things mined away (hidden till /clearall)
 	bool g_digDirty = false;                // the shader's copy of the cells is out of date
 
 	void cell_of(int64_t k, int &x, int &y, int &z)
@@ -2075,7 +2411,87 @@ namespace
 	{
 		switch (m)
 		{
-
+		case 0x8C8308CA: // SnowLoose
+		case 0xCBA23987: // SnowCompact
+		case 0x608ABC80: // SnowDeep
+		case 0x5C67C62A: // SnowTarmac
+		case 0x38BBD00C: // GravelSmall
+		case 0x7EDC5571: // GravelLarge
+		case 0xEABD174E: // GravelDeep
+		case 0x72C668B6: // GravelTrainTrack
+		case 0x8F9CD58F: // DirtTrack
+		case 0x8C31B7EA: // MudHard
+		case 0x129ECA2A: // MudPothole
+		case 0x61826E7A: // MudSoft
+		case 0xEFB2DF09: // MudUnderwater
+		case 0x42251DC0: // MudDeep
+		case 0xD4C07E2: // Marsh
+		case 0x5E73A22E: // MarshDeep
+		case 0xD63CCDDB: // Soil
+		case 0x4434DFE7: // ClayHard
+		case 0x216FF3F0: // ClaySoft
+		case 0xE47A3E41: // GrassLong
+		case 0x4F747B87: // Grass
+		case 0xB34E900D: // GrassShort
+		case 0x92B69883: // Hay
+		case 0x22AD7B72: // Bushes
+		case 0xC98F5B61: // Twigs
+		case 0x8653C6CD: // Leaves
+		case 0xED932E53: // Woodchips
+		case 0x3B982E13: // Puddle
+		case 0x55E5AAEE: // BushesNoinst
+			return 1;
+		case 0x23500534: // SandstoneSolid
+		case 0x7209440E: // SandstoneBrittle
+		case 0xA0EBF7E4: // SandLoose
+		case 0x1E6D775E: // SandCompact
+		case 0x363CBCD5: // SandWet
+		case 0x8E4D8AFF: // SandTrack
+		case 0xBC4922A4: // SandUnderwater
+		case 0x1E5E7A48: // SandDryDeep
+		case 0x4CCC2AFF: // SandWetDeep
+			return 2;
+		case 0x8DD4EBB9: // TreeBark
+		case 0xE82A6F1C: // WoodSolidSmall
+		case 0x2114B37D: // WoodSolidMedium
+		case 0x309F8BB7: // WoodSolidLarge
+		case 0x789C7AB: // WoodSolidPolished
+		case 0xD35443DE: // WoodFloorDusty
+		case 0x76D9AC2F: // WoodHollowSmall
+		case 0xEA3746BD: // WoodHollowMedium
+		case 0xC8D738E7: // WoodHollowLarge
+		case 0x461D0E9B: // WoodChipboard
+		case 0x2B13503D: // WoodOldCreaky
+		case 0x981E5200: // WoodHighDensity
+		case 0x77E08A22: // WoodLattice
+		case 0x3B7F59CE: // VfxWoodBeerBarrel
+		case 0x8070DCF9: // WoodHighFriction
+			return 3;
+		case 0xA9BC4217: // MetalSolidSmall
+		case 0xEA34E8F8: // MetalSolidMedium
+		case 0x2CD49BD1: // MetalSolidLarge
+		case 0xF3B93B: // MetalHollowSmall
+		case 0x6E3DBFB8: // MetalHollowMedium
+		case 0xDD3CDCF9: // MetalHollowLarge
+		case 0x2D6E26CD: // MetalChainLinkSmall
+		case 0x781FA34: // MetalChainLinkLarge
+		case 0x31B80AD6: // MetalCorrugatedIron
+		case 0xE699F485: // MetalGrille
+		case 0x7D368D93: // MetalRailing
+		case 0x68FEB9FD: // MetalDuct
+		case 0xF2373DE9: // MetalGarageDoor
+		case 0xD2FFA63D: // MetalManhole
+		case 0xFA73FCA1: // CarMetal
+		case 0xED92FC47: // VfxMetalElectrified
+		case 0x2473B1BF: // VfxMetalWaterTower
+		case 0xD6CBF212: // VfxMetalSteam
+		case 0x13D5CB0D: // VfxMetalFlame
+		case 0xBA428CAB: // PhysElectricFence
+		case 0x87F87187: // PhysElectricMetal
+		case 0xA402C0C0: // PhysBarbedWire
+		case 0xD48AA0F2: // MetalSolidRoadSurface
+		case 0x8388FA6C: // StuntRampSurface
+			return 4;
 		default:
 			return 0;
 		}
@@ -2321,10 +2737,14 @@ namespace
 		for (int i = 0; i < objs; ++i)
 		{
 			const Object ob = handles[i];
-			if (g_props.handles.count(ob) || g_melting.count(ob))
+			// (not Minecraft's blocks, Steve's gun, what anyone carries, money and weapons lying about, or a mission's own)
+			if (g_props.handles.count(ob) || g_melting.count(ob) || ob == g_gunFit.held)
 				continue;
 			const Vector3 o = natives::GetEntityCoords(ob, TRUE);
 			if ((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) > 60.0f * 60.0f)
+				continue;
+			if (natives::IsEntityAttached(ob) || natives::IsObjectAPickup(ob) || natives::IsObjectAPortablePickup(ob) ||
+				(natives::IsEntityAMissionEntity(ob) && !is_loose(ob)))
 				continue;
 			const int cx = int(std::floor(o.x)), cz = int(std::floor(-o.y));
 			bool inLava = false;
@@ -2336,14 +2756,18 @@ namespace
 			if (!inLava)
 			{
 				// by fire (or lava): alight, where it stands
-				if (!natives::IsEntityAttached(ob) && !natives::IsEntityOnFire(ob) && hot_near(o.x, o.y, o.z - 0.5f, 0.8f, 1.5f))
+				if (!natives::IsEntityOnFire(ob) && hot_near(o.x, o.y, o.z - 0.5f, 0.8f, 1.5f))
 					natives::StartEntityFire(ob);
 				continue;
 			}
-			natives::SetEntityDynamic(ob, TRUE);
-			natives::ApplyForceToEntity(ob, 0.0f, 0.0f, -2.0f);
-			natives::StartEntityFire(ob);
-			g_melting[ob] = now + 4000;
+			// (the map's own swapped for the plugin's copy, which sinks and burns away)
+			const Object melt = loosen(ob);
+			if (melt == 0 || g_melting.count(melt))
+				continue;
+			natives::SetEntityDynamic(melt, TRUE);
+			natives::ApplyForceToEntity(melt, 0.0f, 0.0f, -2.0f);
+			natives::StartEntityFire(melt);
+			g_melting[melt] = now + 4000;
 		}
 		for (auto it = g_melting.begin(); it != g_melting.end();)
 		{
@@ -2353,8 +2777,9 @@ namespace
 				continue;
 			}
 			Entity e = it->first;
-			if (natives::DoesEntityExist(e))
+			if (natives::DoesEntityExist(e) && movable_object(e))
 			{
+				loose_gone(e); // (the map's own stays hidden till the player is far off)
 				natives::SetEntityAsMissionEntity(e);
 				natives::DeleteEntity(&e);
 			}
@@ -2462,10 +2887,13 @@ namespace
 			float fx = 0.0f, fy = 0.0f;
 			if (!water_at(o.x, o.y, o.z - 0.6f, fx, fy) && !water_at(o.x, o.y, o.z + 0.4f, fx, fy))
 				continue;
-			if (natives::IsEntityOnFire(handles[i]))
+			// doused: a burning engine doesn't flare up again (a wreck stays a wreck: water never mended one)
+			const bool burning = natives::IsEntityOnFire(handles[i]) != FALSE;
+			if (burning)
 				natives::StopEntityFire(handles[i]);
-			if (natives::GetVehicleEngineHealth(handles[i]) < 50.0f)
-				natives::SetVehicleEngineHealth(handles[i], 50.0f); // (doused: the engine doesn't flare up again)
+			if (burning && !natives::IsEntityDead(handles[i]) && natives::GetVehicleEngineHealth(handles[i]) < 50.0f &&
+				natives::GetVehicleEngineHealth(handles[i]) > -900.0f)
+				natives::SetVehicleEngineHealth(handles[i], 50.0f);
 			// carried along where it flows, as Minecraft's water carries a boat
 			const float len = std::sqrt(fx * fx + fy * fy);
 			if (len > 0.1f)
@@ -2770,6 +3198,7 @@ namespace
 		const float ux = fx * std::cos(pt), uy = fy * std::cos(pt), uz = std::sin(pt);
 		const bool smash = kind == "mace" && natives::GetEntityVelocity(ped).z < -4.0f;
 		const float reach = smash ? 6.0f : style->reach * std::max(1.0f, g_meleeRange / 8.0f), cone = smash ? -1.0f : style->cone;
+		g_doing = "Minecraft's melee: what the crosshair is on";
 		// what the crosshair is on, from beside Steve up to 8 m on (a person, a body, a car)
 		const float along = std::max(0.0f, (me.x - eye.x) * ux + (me.y - eye.y) * uy + (me.z + 0.5f - eye.z) * uz);
 		const float ax = eye.x + ux * along, ay = eye.y + uy * along, az = eye.z + uz * along;
@@ -2788,6 +3217,8 @@ namespace
 					hit = FALSE;
 				aimed = 0;
 			}
+			if (aimed != 0 && !natives::DoesEntityExist(aimed))
+				aimed = 0; // (the map itself: no entity of its own)
 			if (aimed != 0 && natives::GetEntityType(aimed) == 3)
 			{
 				aimedObject = aimed; // (a loose thing: a lamp post, a sign, a car's bumper or door lying about)
@@ -2819,6 +3250,17 @@ namespace
 						aimed = q;
 						aimedAt = Vector3{o.x - lx, 0, o.y - ly, 0, o.z, 0};
 					}
+				}
+				// (not through a wall: nothing of GTA's between the eye and them)
+				if (aimed != 0)
+				{
+					Vector3 wallAt = {}, wallN = {};
+					Entity wallE = 0;
+					Hash wallM = 0;
+					const Vector3 o = natives::GetEntityCoords(aimed, TRUE);
+					if (world_probe(ped, ax, ay, az, o.x, o.y, o.z + 0.2f, 1 | 16, 7, wallAt, wallN, wallE, wallM) && wallE != aimed &&
+						(wallE == 0 || !g_props.handles.count(wallE)))
+						aimed = 0;
 				}
 			}
 		}
@@ -2860,6 +3302,7 @@ namespace
 				natives::SetEntityVelocity(q, v.x + ux * k, v.y + uy * k, v.z + style->pedUp / 6.0f * 1.6f * push + std::max(0.0f, uz) * k);
 			}
 		};
+		g_doing = "Minecraft's melee: people hit";
 		std::set<Entity> done;
 		int handles[256];
 		const int n = worldGetAllPeds(handles, 256);
@@ -2906,6 +3349,7 @@ namespace
 					break_glass(ped, glassAt, wx / wl, wy / wl, wz / wl, v);
 			}
 		};
+		g_doing = "Minecraft's melee: cars hit";
 		each_vehicle_near(me.x, me.y, me.z, reach + 2.5f, [&](Vehicle v, float dx, float dy, float) {
 			const float d = std::sqrt(dx * dx + dy * dy);
 			const Vector3 o = natives::GetEntityCoords(v, TRUE);
@@ -2919,22 +3363,25 @@ namespace
 		{
 			// street furniture (lamp posts, signs, bins, hydrants, benches) and loose things lying about (a car's bumper or
 			// door): knocked loose and launched along the look, light things further, knockback much further
-			auto fling = [&](Object ob) {
-				if (!natives::DoesEntityExist(ob) || natives::GetEntityType(ob) != 3)
+			auto fling = [&](Entity e) {
+				g_doing = "Minecraft's melee: a thing knocked loose";
+				// (the map's own swapped for the plugin's copy: GTA crashed when its own were woken or pushed)
+				const Object ob = loosen(e, 3000.0f);
+				if (ob == 0)
 					return;
 				natives::FreezeEntityPosition(ob, FALSE);
 				natives::SetEntityDynamic(ob, TRUE);
+				natives::ActivatePhysics(ob);
 				const float light = std::clamp(std::sqrt(60.0f / std::max(1.0f, entity_mass(ob))), 0.35f, 1.5f);
 				const float kb = 1.0f + float(std::min(en.knockback, 50));
 				const float speed = std::min(60.0f, (3.0f + 7.0f * s) * light * kb * (smash ? 1.6f : 1.0f) * (style->windows ? 1.3f : 1.0f));
 				const float up = (1.5f + 2.5f * s) * std::min(light, 1.0f) * (smash ? 1.6f : 1.0f);
-				// (a blow only: ACTIVATE_PHYSICS and SET_ENTITY_VELOCITY on some of GTA's map objects crashed the game)
-				natives::ApplyForceToEntity(ob, ux * speed, uy * speed, up + uz * speed);
+				natives::SetEntityVelocity(ob, ux * speed, uy * speed, up + uz * speed);
 			};
 			// the one the crosshair is on, itself (looked for among the objects around, it often wasn't listed: a street
 			// has hundreds, and Minecraft's placed blocks are some of them too)
-			if (aimedObject != 0 && !g_props.handles.count(aimedObject) && !natives::IsEntityAttached(aimedObject))
-				fling(Object(aimedObject));
+			if (aimedObject != 0)
+				fling(aimedObject);
 			if (smash)
 			{
 				// the mace's smash: everything round about
@@ -2943,7 +3390,7 @@ namespace
 				for (int i = 0; i < n; ++i)
 				{
 					const Object ob = objs[i];
-					if (Entity(ob) == aimedObject || g_props.handles.count(ob) || natives::IsEntityAttached(ob))
+					if (Entity(ob) == aimedObject || g_props.handles.count(ob))
 						continue;
 					const Vector3 o = natives::GetEntityCoords(ob, TRUE);
 					const float dx = o.x - me.x, dy = o.y - me.y, d = std::sqrt(dx * dx + dy * dy);
@@ -2953,6 +3400,7 @@ namespace
 				}
 			}
 		}
+		g_doing = "Minecraft's melee: glass";
 		{
 			// glass in reach along the crosshair's line, from beside Steve (shop windows, a car's windscreen): shattered
 			const float span = reach + 0.5f;
@@ -3054,7 +3502,7 @@ namespace
 			{
 				if (op == "ped")
 				{
-					const Ped p = natives::CreatePed(26, hash, x, y, z, float(json_num(m, "h", 0)));
+					const Ped p = natives::CreatePed(ped_type(model), hash, x, y, z, float(json_num(m, "h", 0)));
 					const std::string scenario = json_str(m, "scenario");
 					const std::string dict = json_str(m, "anim_dict"), anim = json_str(m, "anim");
 					if (!dict.empty() && !anim.empty())
@@ -3305,6 +3753,35 @@ namespace
 		g_props.turns.clear();
 		g_props.pending.clear();
 		g_props.blocks.clear();
+		// (a mined pit's floor and sides aren't Minecraft's to report: kept)
+		for (const int64_t k : g_digSolid)
+		{
+			int x, y, z;
+			cell_of(k, x, y, z);
+			g_props.blocks.insert({x, y, z});
+			g_props.pending.push_back({x, y, z});
+		}
+	}
+
+	void prop_remove(const std::tuple<int, int, int> &key);
+
+	/// A mined pit's floor or side cell solid for GTA (`on`), or not any more.
+	void dig_prop(int64_t k, bool on)
+	{
+		int x, y, z;
+		cell_of(k, x, y, z);
+		const auto key = std::make_tuple(x, y, z);
+		if (on)
+		{
+			g_digSolid.insert(k);
+			g_props.blocks.insert(key);
+			g_props.pending.push_back(key);
+		}
+		else if (g_digSolid.erase(k))
+		{
+			g_props.blocks.erase(key);
+			prop_remove(key);
+		}
 	}
 
 	/// The way a block's prop turns: its thin side (0.80 m) across the wall the block is part of, so a wall of
@@ -3511,8 +3988,11 @@ namespace
 			const float before = std::sqrt(pv.x * pv.x + pv.y * pv.y + pv.z * pv.z), after = std::sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
 			if (before - after < 4.0f || before < 0.1f)
 				return;
-			// the block it ran into: the nearest one ahead of where it was going
+			// the block it ran into: the nearest one ahead of where it was going, touching the car (not a block a few
+			// metres off when it hit something of GTA's)
 			const Vector3 c = natives::GetEntityCoords(v, TRUE);
+			Vector3 mn = {}, mx = {};
+			natives::GetModelDimensions(natives::GetEntityModel(v), &mn, &mx);
 			float best = 5.0f * 5.0f;
 			Vector3 at = {};
 			bool found = false;
@@ -3520,7 +4000,13 @@ namespace
 			{
 				const auto [bx, by, bz] = key;
 				const float x = bx + 0.5f - c.x, y = -(bz + 0.5f) - c.y, z = by - g_yOffset + 0.5f - c.z, d2 = x * x + y * y + z * z;
-				if (d2 < best && x * pv.x + y * pv.y + z * pv.z > 0.0f)
+				if (d2 >= best || x * pv.x + y * pv.y + z * pv.z <= 0.0f)
+					continue;
+				const Vector3 local = natives::GetOffsetFromEntityGivenWorldCoords(v, bx + 0.5f, -(bz + 0.5f), by - g_yOffset + 0.5f);
+				const float ox = std::max({mn.x - local.x, local.x - mx.x, 0.0f}), oy = std::max({mn.y - local.y, local.y - mx.y, 0.0f}),
+							oz = std::max({mn.z - local.z, local.z - mx.z, 0.0f});
+				if (ox * ox + oy * oy + oz * oz > 0.9f * 0.9f) // (the block's middle half a block and a bit from the body)
+					continue;
 				{
 					best = d2;
 					const float d = std::sqrt(d2);
@@ -3558,8 +4044,18 @@ namespace
 			natives::FreezeEntityPosition(o, TRUE);
 			// cars by Minecraft's blocks stay (GTA's population took them away, built round or into)
 			each_vehicle_near(bx + 0.5f, -(bz + 0.5f), by - g_yOffset + 0.5f, 8.0f, [&](Vehicle v, float, float, float) {
-				// (a mission's own car is the mission's: left alone)
-				if (!g_keptCars.count(v) && !natives::IsEntityAMissionEntity(v))
+				// (a mission's own car is the mission's: left alone; traffic driving by isn't built round)
+				if (g_keptCars.count(v) || natives::IsEntityAMissionEntity(v))
+					return;
+				const Vector3 vel = natives::GetEntityVelocity(v);
+				if (vel.x * vel.x + vel.y * vel.y + vel.z * vel.z > 1.0f)
+					return;
+				Vector3 mn = {}, mx = {};
+				natives::GetModelDimensions(natives::GetEntityModel(v), &mn, &mx);
+				const Vector3 local = natives::GetOffsetFromEntityGivenWorldCoords(v, bx + 0.5f, -(bz + 0.5f), by - g_yOffset + 0.5f);
+				const float ox = std::max({mn.x - local.x, local.x - mx.x, 0.0f}), oy = std::max({mn.y - local.y, local.y - mx.y, 0.0f}),
+							oz = std::max({mn.z - local.z, local.z - mx.z, 0.0f});
+				if (ox * ox + oy * oy + oz * oz <= 1.2f * 1.2f) // (touching the block, or in its space)
 				{
 					natives::SetEntityAsMissionEntity(v);
 					g_keptCars.insert(v);
@@ -3634,7 +4130,9 @@ namespace
 		g_doing = g_doingMessage;
 		if (type == "gta")
 		{
-			handle_director(message);
+			// (the video tools' scripted shots, tools/video: only with Director=1, never in play)
+			if (g_settings.director)
+				handle_director(message);
 			return;
 		}
 		if (type == "blocks")
@@ -3820,10 +4318,10 @@ namespace
 		{
 			// Minecraft's player healed (a potion, regeneration, food): GTA's player too
 			const Ped me = natives::PlayerPedId();
-			const int max = natives::GetEntityMaxHealth(me) - 100;
+			const int max = real_max_health(me) - 100;
 			if (max > 0 && !g_noInput && !natives::IsEntityDead(me))
-				natives::SetEntityHealth(me, std::min(natives::GetEntityMaxHealth(me),
-					natives::GetEntityHealth(me) + std::max(1, int(json_num(message, "d", 0.0) * max / 20.0))));
+				natives::SetEntityHealth(me, std::min(natives::GetEntityMaxHealth(me), std::min(real_max_health(me), real_health(me) +
+					std::max(1, int(json_num(message, "d", 0.0) * max / 20.0))) + (me == g_totemPed ? g_totemBuffer : 0)));
 			return;
 		}
 		if (type == "effects")
@@ -3995,10 +4493,10 @@ namespace
 	{
 		if (mobs_active())
 			return; // a relevel clears all of Minecraft's ground: the mobs would fall through the world
-		static int next = 0;
+		static int next = 0, lastAt = -100000;
 		const int now = natives::GetGameTimer();
-		if (now < next)
-			return;
+		if (now < next || now - lastAt < 30000)
+			return; // (at most every half a minute)
 		next = now + 1500;
 		// not again until well away from where it last levelled: on slopes, stairs and uneven streets the ground is never
 		// on a whole block for long, and each relevel rebuilt all of Minecraft's ground around (a hitch) and, in Minecraft's
@@ -4013,7 +4511,7 @@ namespace
 		if (!natives::GetGroundZFor3dCoord(player.x, player.y, player.z + 1.0f, &groundZ, FALSE, FALSE))
 			return;
 		const float mc = groundZ + g_yOffset;
-		if (std::fabs(mc - std::round(mc)) < 0.15f)
+		if (std::fabs(mc - std::round(mc)) < 0.3f)
 			return;
 		const int px = int(std::floor(player.x)), pz = int(std::floor(-player.y));
 		for (const auto &[key, obj] : g_props.live)
@@ -4030,6 +4528,7 @@ namespace
 				return; // a hole dug nearby: it stays where it was dug
 		}
 		logf("relevel: the ground here is %.2f off a whole block", mc - std::round(mc));
+		lastAt = now;
 		g_haveOffset = false; // the tick re-levels to the ground here
 	}
 
@@ -4590,7 +5089,8 @@ namespace
 		const bool forced = natives::GetGameTimer() < g_walk.forceUntil; // (a riptide flight: Minecraft's, even with F6 off)
 		if ((!g_mcMove && !forced) || g_gtaHands || g_drive.on || g_carFly.on || natives::GetGameTimer() < g_walk.gtaUntil)
 			return false;
-		if (!natives::IsPlayerControlOn(natives::PlayerId()) || !natives::IsPedOnFoot(ped) || natives::IsPedInAnyVehicle(ped, FALSE) ||
+		if (!natives::IsPlayerControlOn(natives::PlayerId()) || (!natives::IsPedOnFoot(ped) && !natives::IsPedSwimming(ped)) ||
+			natives::IsPedInAnyVehicle(ped, FALSE) ||
 			natives::IsPedGettingIntoAVehicle(ped))
 			return false;
 		if (g_mcSpectator)
@@ -4911,7 +5411,6 @@ namespace
 				else if (g_mcFlying && jump > 0.05f && jump < 40.0f)
 				{
 					// gliding or flying: its whole way is checked (fast, so no going through a building between frames)
-					BOOL hit = FALSE;
 					Vector3 at = {}, n = {};
 					bool blocked = false;
 					const float ux = jx / jump, uy = jy / jump, uz = jz / jump;
@@ -4926,7 +5425,6 @@ namespace
 							ty = g_walk.y + uy * keep;
 							tz = g_walk.z + uz * keep;
 						}
-					(void)hit;
 					if (blocked)
 					{
 						// stopped at the wall, as Minecraft's elytra stops at a block (and falls from there)
@@ -5026,9 +5524,9 @@ namespace
 				Entity e = 0;
 				const int probe = natives::StartShapeTestLosProbe(g_walk.x, g_walk.y, g_walk.z + 0.6f, g_walk.x + ux * 0.9f, g_walk.y + uy * 0.9f,
 					g_walk.z + 0.6f, 16, ped, 4);
-				if (natives::GetShapeTestResult(probe, &hit, &at, &n, &e) == 2 && hit && e != 0 && natives::GetEntityType(e) == 3 &&
-					!g_props.handles.count(e))
-					natives::ApplyForceToEntity(e, ux * 3.0f, uy * 3.0f, 0.0f);
+				if (natives::GetShapeTestResult(probe, &hit, &at, &n, &e) == 2 && hit && e != 0 && natives::DoesEntityExist(e) &&
+					natives::GetEntityType(e) == 3 && !g_props.handles.count(e))
+					natives::ApplyForceToEntity(e, ux * 3.0f, uy * 3.0f, 0.0f); // (a door swings open on its hinges: a push only)
 			}
 		}
 		proxy_tick(ped, false);
@@ -5038,7 +5536,7 @@ namespace
 	/// Who Steve stands in for: the player, or in a cutscene the cutscene's copy of the player's character.
 	Ped steve_ped(Ped ped)
 	{
-		if (!natives::IsCutsceneActive())
+		if (!natives::IsCutscenePlaying())
 			return ped;
 		static const Hash michael = natives::GetHashKey("player_zero"), franklin = natives::GetHashKey("player_one"),
 			trevor = natives::GetHashKey("player_two");
@@ -5279,7 +5777,6 @@ namespace
 			return;
 		g_nextWorldMobsAt = now + 100;
 		const Vector3 me = natives::GetEntityCoords(player, TRUE);
-		const Vehicle mine = natives::IsPedInAnyVehicle(player, FALSE) ? natives::GetVehiclePedIsIn(player, FALSE) : 0;
 		std::set<int> kill, burn;
 		auto touching = [](const WorldMob &mob, const Vector3 &o, float r) {
 			const float dx = o.x - mob.x, dy = o.y - mob.y;
@@ -5307,7 +5804,6 @@ namespace
 					burn.insert(mob.id);
 			}
 		});
-		(void)mine;
 		int handles[256];
 		const int n = worldGetAllPeds(handles, 256);
 		for (int i = 0; i < n; ++i)
@@ -5408,8 +5904,6 @@ namespace
 				natives::SetRunSprintMultiplierForPlayer(player, g_cheats.fastRun ? 1.49f : speed >= 0 ? std::min(1.49f, 1.0f + 0.12f * float(speed + 1)) : 1.0f);
 				const int strong = mc_effect("strength");
 				natives::SetPlayerMeleeWeaponDamageModifier(player, strong >= 0 ? 1.0f + 0.8f * float(strong + 1) : 1.0f);
-				if (!g_godMode)
-					natives::SetEntityProofs(ped, g_mcBlocking, mc_effect("fire_resistance") >= 0, FALSE, FALSE, g_mcBlocking);
 				natives::SetPedIsDrunk(ped, g_cheats.drunk || mc_effect("nausea") >= 0);
 				// night vision as GTA's own goggles; invisible, GTA's people (and the police) don't see the player
 				natives::SetNightvision(mc_effect("night_vision") >= 0);
@@ -5441,11 +5935,22 @@ namespace
 			natives::SetScenarioPedDensityMultiplierThisFrame(g_cheats.crowds, g_cheats.crowds);
 		}
 		// a totem of undying in hand: about to die, GTA's player is saved instead (and the totem's used up, as in Minecraft)
+		if (g_totemBuffer != 0 && (g_totemPed != ped || !g_mcTotem || g_godMode || natives::IsEntityDead(ped)))
+			totem_unbuffer();
 		if (g_mcTotem && !g_godMode && !natives::IsEntityDead(ped))
 		{
-			const int max = natives::GetEntityMaxHealth(ped) - 100, hp = natives::GetEntityHealth(ped) - 100;
+			if (g_totemBuffer == 0)
+			{
+				// (one hit from full health to dead never went past "low" for the totem to act on)
+				natives::SetEntityMaxHealth(ped, natives::GetEntityMaxHealth(ped) + kTotemBuffer);
+				natives::SetEntityHealth(ped, natives::GetEntityHealth(ped) + kTotemBuffer);
+				g_totemBuffer = kTotemBuffer;
+				g_totemPed = ped;
+			}
+			const int max = real_max_health(ped) - 100, hp = real_health(ped) - 100;
 			if (max > 0 && hp < max / 8)
 			{
+				totem_unbuffer();
 				natives::SetEntityHealth(ped, 100 + max / 2);
 				natives::StopEntityFire(ped);
 				g_mcTotem = false; // (until Minecraft says it holds another)
@@ -5476,7 +5981,8 @@ namespace
 					{
 						wx = w.x;
 						wy = w.y;
-						sendf("{\"t\":\"cmd\",\"c\":\"setworldspawn %d %d %d\"}", int(std::floor(w.x)), 64, int(std::floor(-w.y)));
+						// (compasses point there: not the world's spawn, which moved the player's respawn point too)
+						sendf("{\"t\":\"waypoint\",\"c\":[%d,%d,%d]}", int(std::floor(w.x)), 64, int(std::floor(-w.y)));
 					}
 				}
 			}
@@ -5509,13 +6015,22 @@ namespace
 						dx / dl, dz / dl, -dy / dl, explosive ? "true" : "false");
 			}
 		}
-		// a shield held up: bullets and blows don't get through (GTA's damage, as Minecraft's own is blocked by Minecraft)
+		// a shield held up: bullets and blows don't get through (GTA's damage, as Minecraft's own is blocked by Minecraft);
+		// fire resistance: fire doesn't. All in one place, applied again whenever either changes, the player is another
+		// character, or F9 set GTA's own rules (each had its own, and each undid the other's)
 		{
-			static bool shielded = false;
-			if (g_mcBlocking != shielded && !g_godMode)
+			static Ped provedPed = 0;
+			static int proved = -1;
+			const bool fireproof = mc_effect("fire_resistance") >= 0;
+			const int want = (g_mcBlocking ? 1 : 0) | (fireproof ? 2 : 0);
+			if (g_godMode)
+				proved = -1; // (god mode's own proofs: make_safe)
+			else if (want != proved || ped != provedPed || g_proofsDirty)
 			{
-				shielded = g_mcBlocking;
-				natives::SetEntityProofs(ped, shielded, mc_effect("fire_resistance") >= 0, FALSE, FALSE, shielded);
+				proved = want;
+				provedPed = ped;
+				g_proofsDirty = false;
+				natives::SetEntityProofs(ped, g_mcBlocking, fireproof, FALSE, FALSE, g_mcBlocking);
 			}
 		}
 	}
@@ -5523,6 +6038,71 @@ namespace
 	/// /gta <setting> [on|off|value]: GTA's cheats and abilities (superjump, fastrun, fastswim, explosiveammo, fireammo,
 	/// explosivemelee, slidey, moon, slowmo, infiniteammo, neverwanted, drunk, onehit, weapons, heal, armor, wanted N),
 	/// and spawning: /gta spawn car|truck|tank|plane|heli|boat|bike|npc|cop|<model>.
+	// A teleport onto the ground somewhere GTA hasn't loaded yet (/waypoint, /gta tp x y): the player waits high above
+	// it, a frame at a time, till GTA has its ground there (or 4 s), then is put on it
+	struct Landing
+	{
+		bool on = false;
+		float x = 0, y = 0, fallbackZ = 40.0f;
+		int until = 0;
+		bool scene = false;
+		std::string note;
+	} g_landing;
+
+	void land_start(Ped player, float x, float y, float fallbackZ, bool loadScene, const char *note)
+	{
+		if (g_drive.on)
+			drive_set(player, false);
+		if (g_carFly.on)
+			car_fly_end();
+		if (g_landing.on && g_landing.scene)
+			natives::NewLoadSceneStop();
+		g_landing = {true, x, y, fallbackZ, natives::GetGameTimer() + 4000, loadScene, note != nullptr ? note : ""};
+		if (loadScene)
+			natives::NewLoadSceneStartSphere(x, y, 100.0f, 120.0f);
+	}
+
+	void landing_tick(Ped player)
+	{
+		if (!g_landing.on)
+			return;
+		const bool inCar = natives::IsPedInAnyVehicle(player, FALSE) != FALSE;
+		const Entity mover = inCar ? Entity(natives::GetVehiclePedIsIn(player, FALSE)) : Entity(player);
+		float gz = 0.0f;
+		bool found = false;
+		for (const float z : {1000.0f, 700.0f, 400.0f, 200.0f, 100.0f, 50.0f, 20.0f})
+			if (natives::GetGroundZFor3dCoord(g_landing.x, g_landing.y, z, &gz, FALSE, FALSE))
+			{
+				found = true;
+				break;
+			}
+		if (!found && natives::GetGameTimer() < g_landing.until)
+		{
+			natives::SetEntityCoordsNoOffset(mover, g_landing.x, g_landing.y, 900.0f);
+			natives::RequestCollisionAtCoord(g_landing.x, g_landing.y, 100.0f);
+			return;
+		}
+		g_landing.on = false;
+		if (g_landing.scene)
+			natives::NewLoadSceneStop();
+		if (!found)
+			gz = g_landing.fallbackZ;
+		natives::SetEntityCoordsNoOffset(mover, g_landing.x, g_landing.y, gz + (inCar ? 0.6f : 1.0f));
+		natives::SetGameplayCamRelativeHeading(0.0f);
+		if (g_walk.on)
+		{
+			g_walk.x = g_landing.x;
+			g_walk.y = g_landing.y;
+			g_walk.z = g_walk.standZ = gz;
+			g_walk.teleportAt = natives::GetGameTimer();
+			g_walk.haveEst = false;
+			walk_correct(false, "teleport");
+		}
+		g_haveOffset = false; // Minecraft's ground starts over here (and its player is put there)
+		if (!g_landing.note.empty())
+			natives::Notify(g_landing.note.c_str());
+	}
+
 	void gta_command(Ped player, const std::string &args)
 	{
 		std::string what = args, value;
@@ -5667,16 +6247,8 @@ namespace
 			if (what == "tp" && to.z == 1000.0f)
 			{
 				// no height given: onto the ground there (once GTA has loaded it)
-				float gz = 0.0f;
-				for (int i = 0; i < 120; ++i)
-				{
-					natives::SetEntityCoordsNoOffset(mover, to.x, to.y, 900.0f);
-					natives::RequestCollisionAtCoord(to.x, to.y, 100.0f);
-					if (natives::GetGroundZFor3dCoord(to.x, to.y, 1000.0f, &gz, FALSE, FALSE))
-						break;
-					WAIT(0);
-				}
-				to.z = gz + 1.0f;
+				land_start(player, to.x, to.y, 40.0f, false, nullptr);
+				return;
 			}
 			natives::SetEntityCoordsNoOffset(mover, to.x, to.y, to.z);
 			if (g_walk.on)
@@ -5868,10 +6440,11 @@ namespace
 			return;
 		}
 		natives::RequestModel(h);
-		for (int i = 0; i < 300 && !natives::HasModelLoaded(h); ++i)
-			WAIT(0);
 		if (!natives::HasModelLoaded(h))
+		{
+			later([player, model] { summon(player, model); }); // (that model again, once loaded)
 			return;
+		}
 		const bool vehicle = natives::IsModelAVehicle(h) != FALSE;
 		const Vector3 cam = natives::GetFinalRenderedCamRot(2);
 		const Vector3 me = natives::GetEntityCoords(player, TRUE);
@@ -5901,7 +6474,7 @@ namespace
 			}
 			else
 			{
-				const Ped q = natives::CreatePed(26, h, x, y, gz + 0.5f, heading + 180.0f);
+				const Ped q = natives::CreatePed(ped_type(model), h, x, y, gz + 0.5f, heading + 180.0f);
 				natives::TaskWanderStandard(q);
 				e = q;
 			}
@@ -6169,7 +6742,10 @@ namespace
 		const Vector3 v = natives::GetEntityVelocity(body);
 		const float out = std::max(0.0f, v.x * ux + v.y * uy + v.z * uz) + std::min(over * 3.0f, 6.0f);
 		if (natives::GetEntityType(body) == 3)
-			natives::ApplyForceToEntity(body, -ux * out, -uy * out, -uz * out); // (a thing: pushed, never its velocity set)
+		{
+			if (movable_object(body)) // (the map's own never moved in the first place)
+				natives::ApplyForceToEntity(body, -ux * out, -uy * out, -uz * out);
+		}
 		else
 			natives::SetEntityVelocity(body, v.x - ux * out, v.y - uy * out, v.z - uz * out);
 	}
@@ -6207,7 +6783,18 @@ namespace
 		}
 		else if (type == 3)
 		{
-			natives::FreezeEntityPosition(body, FALSE); // (signs, bins, doors: torn loose)
+			// signs, bins, doors: torn loose (the map's own swapped for the plugin's copy, which the lead is on from now)
+			const Object o = loosen(body);
+			if (o == 0)
+				return;
+			if (Entity(o) != body)
+			{
+				for (LeashEnd *end : {&l.a, &l.b})
+					if (end->kind == 1 && end->e == body)
+						end->e = o;
+				body = o;
+			}
+			natives::FreezeEntityPosition(body, FALSE);
 			natives::SetEntityDynamic(body, TRUE);
 		}
 		const Vector3 v = natives::GetEntityVelocity(body);
@@ -6216,7 +6803,7 @@ namespace
 			return;
 		const float dv = want - along;
 		if (type == 3)
-			natives::ApplyForceToEntity(body, ux * dv, uy * dv, uz * dv); // (a thing: pushed, never its velocity set)
+			natives::ApplyForceToEntity(body, ux * dv, uy * dv, uz * dv);
 		else
 			natives::SetEntityVelocity(body, v.x + ux * dv, v.y + uy * dv, v.z + uz * dv + (type == 1 ? 0.3f : 0.0f));
 	}
@@ -6558,8 +7145,11 @@ namespace
 			return;
 		const int x = c[0], y = c[1], z = c[2], kind = std::clamp(int(json_num(m, "k", 0.0)), 0, 4);
 		const Vector3 mid = cell_middle(x, y, z);
+		// a thing (a door, a sign) mined, Minecraft says (not GTA's wall or street, though a thing stands near: that hid
+		// the thing and left the wall)
+		if (json_num(m, "o", 0.0) != 0.0)
 		{
-			// a thing (a door, a sign) where the crosshair was: from the camera into the cell, and across it
+			// where the crosshair was: from the camera into the cell, and across it
 			const Vector3 eye = natives::GetFinalRenderedCamCoord();
 			const float ex = mid.x - eye.x, ey = mid.y - eye.y, ez = mid.z - eye.z, el = std::max(0.01f, std::sqrt(ex * ex + ey * ey + ez * ez));
 			const float probes[4][6] = {{eye.x, eye.y, eye.z, mid.x + ex / el * 0.7f, mid.y + ey / el * 0.7f, mid.z + ez / el * 0.7f},
@@ -6571,19 +7161,31 @@ namespace
 				Vector3 at = {}, n = {};
 				Entity e = 0;
 				const int probe = natives::StartShapeTestLosProbe(q[0], q[1], q[2], q[3], q[4], q[5], 16, natives::PlayerPedId(), 7);
-				if (natives::GetShapeTestResult(probe, &hit, &at, &n, &e) != 2 || !hit || e == 0 || g_props.handles.count(e) ||
-					natives::GetEntityType(e) != 3 || natives::IsEntityAttached(e) || dist3(at, mid) > 1.0f)
+				if (natives::GetShapeTestResult(probe, &hit, &at, &n, &e) != 2 || !hit || e == 0 || !natives::DoesEntityExist(e) ||
+					g_props.handles.count(e) || natives::GetEntityType(e) != 3 || natives::IsEntityAttached(e) || dist3(at, mid) > 1.0f)
 					continue;
-				natives::SetEntityVisible(e, FALSE, FALSE);
-				natives::SetEntityCollision(e, FALSE, FALSE);
-				natives::FreezeEntityPosition(e, TRUE);
-				g_dugThings.push_back(e);
-				logf("dug: thing %d (model %08X) at %d %d %d mined away", int(e), unsigned(natives::GetEntityModel(e)), x, y, z);
+				const Hash model = natives::GetEntityModel(e);
+				if (is_loose(e) || natives::IsEntityAMissionEntity(e))
+				{
+					// the plugin's copy of one (its original stays hidden), or a script's own: gone
+					loose_gone(e);
+					natives::SetEntityAsMissionEntity(e);
+					natives::DeleteEntity(&e);
+				}
+				else
+				{
+					// the map's own: hidden (GTA crashed when its own were changed themselves)
+					const Vector3 o = natives::GetEntityCoords(e, FALSE);
+					natives::CreateModelHideExcludingScriptObjects(o.x, o.y, o.z, 0.3f, model);
+					g_dugThings.push_back({model, o.x, o.y, o.z});
+				}
+				logf("dug: thing (model %08X) at %d %d %d mined away", unsigned(model), x, y, z);
 				return;
 			}
 		}
 		g_dug[cell_key(x, y, z)] = kind;
 		g_digFill.erase(cell_key(x, y, z));
+		dig_prop(cell_key(x, y, z), false);
 		g_digDirty = true;
 		std::string fill;
 		int filled = 0;
@@ -6599,9 +7201,13 @@ namespace
 				continue;
 			int fk = kind;
 			float top = 0.0f;
-			if ((fk == 1 || fk == 2) && natives::GetGroundZFor3dCoord(p.x, p.y, p.z + 100.0f, &top, FALSE, FALSE) && top - p.z > 3.0f)
+			const bool ground = natives::GetGroundZFor3dCoord(p.x, p.y, p.z + 100.0f, &top, FALSE, FALSE);
+			if ((fk == 1 || fk == 2) && ground && top - p.z > 3.0f)
 				fk = 0;
 			g_digFill.insert(k);
+			// wholly under GTA's ground (not poking up through the street): solid for GTA's cars and people
+			if (!ground || top >= p.z + 0.45f)
+				dig_prop(k, true);
 			char e[64];
 			snprintf(e, sizeof(e), "%s%d,%d,%d,%d", fill.empty() ? "" : ",", nx, ny, nz, fk);
 			fill += e;
@@ -6615,18 +7221,19 @@ namespace
 	/// Everything mined back (/clearall, a new Minecraft): the things hidden show again, no cell is dug out.
 	void dig_clear()
 	{
-		for (const Entity e : g_dugThings)
-			if (natives::DoesEntityExist(e))
-			{
-				natives::SetEntityVisible(e, TRUE, FALSE);
-				natives::SetEntityCollision(e, TRUE, TRUE);
-				natives::FreezeEntityPosition(e, FALSE);
-			}
+		for (const DugThing &t : g_dugThings)
+			natives::RemoveModelHide(t.x, t.y, t.z, 0.3f, t.model);
 		g_dugThings.clear();
 		if (!g_dug.empty() || !g_digFill.empty())
 			g_digDirty = true;
 		g_dug.clear();
 		g_digFill.clear();
+		for (const int64_t k : std::vector<int64_t>(g_digSolid.begin(), g_digSolid.end()))
+			dig_prop(k, false);
+		for (auto &[e, f] : g_pitFalls)
+			if (natives::DoesEntityExist(e))
+				natives::SetEntityCollision(e, TRUE, TRUE);
+		g_pitFalls.clear();
 	}
 
 	/// Every frame: the shader's copy of the dug and filled cells round the camera (64 cells each way, as a 512 x 512
@@ -6637,7 +7244,7 @@ namespace
 		static bool sent = false;
 		const Vector3 cam = natives::GetFinalRenderedCamCoord();
 		const int cx = int(std::floor(cam.x)), cy = int(std::floor(cam.z + g_yOffset)), cz = int(std::floor(-cam.y));
-		const bool off = std::abs(cx - (ox + 32)) > 12 || std::abs(cy - (oy + 32)) > 12 || std::abs(cz - (oz + 32)) > 12;
+		const bool off = std::abs(cx - (ox + 32)) > 8 || std::abs(cy - (oy + 32)) > 8 || std::abs(cz - (oz + 32)) > 8;
 		if (!g_digDirty && !(sent && off))
 			return;
 		g_digDirty = false;
@@ -6669,6 +7276,97 @@ namespace
 			put(k, 255);
 		compositor::set_dig(ox, oy, oz, grid);
 		sent = true;
+	}
+
+	/// Every frame while anything is mined: GTA's cars and people over a pit drop into it (GTA's street is still solid there
+	/// to GTA: they go through it, collision off, till they reach the pit's floor, and stand on that). A car falls in when
+	/// the pit is under all of it (a wheel over a single hole doesn't), a person when it's under their feet.
+	void pit_tick(Ped player)
+	{
+		if (g_dug.empty() && g_pitFalls.empty())
+			return;
+		const int now = natives::GetGameTimer();
+		// falling: down to the first cell not dug out, then solid again, standing on it
+		for (auto it = g_pitFalls.begin(); it != g_pitFalls.end();)
+		{
+			const Entity e = it->first;
+			if (!natives::DoesEntityExist(e))
+			{
+				it = g_pitFalls.erase(it);
+				continue;
+			}
+			const Vector3 o = natives::GetEntityCoords(e, TRUE);
+			float under = o.z - 1.0f;
+			if (natives::GetEntityType(e) == 2)
+			{
+				Vector3 mn = {}, mx = {};
+				natives::GetModelDimensions(natives::GetEntityModel(e), &mn, &mx);
+				under = o.z + mn.z;
+			}
+			const bool floor = !dug_at(o.x, o.y, under - 0.05f);
+			if (!floor && now - it->second < 6000)
+			{
+				++it;
+				continue;
+			}
+			if (floor)
+			{
+				const float top = std::floor(under - 0.05f + g_yOffset) + 1.0f - g_yOffset;
+				if (top > under - 0.6f)
+					natives::SetEntityCoordsNoOffset(e, o.x, o.y, o.z + (top - under) + 0.03f);
+			}
+			natives::SetEntityCollision(e, TRUE, TRUE);
+			it = g_pitFalls.erase(it);
+		}
+		static int nextLook = 0;
+		if (g_dug.empty() || now < nextLook)
+			return;
+		nextLook = now + 100;
+		const Vector3 me = natives::GetEntityCoords(player, TRUE);
+		auto drop = [&](Entity e) {
+			natives::SetEntityCollision(e, FALSE, TRUE);
+			natives::ActivatePhysics(e);
+			g_pitFalls[e] = now;
+			logf("pit: %s %d drops into a mined hole", natives::GetEntityType(e) == 2 ? "car" : "person", int(e));
+		};
+		int handles[256];
+		const int cars = worldGetAllVehicles(handles, 256);
+		for (int i = 0; i < cars; ++i)
+		{
+			const Vehicle v = handles[i];
+			if (g_pitFalls.count(v) || (g_carFly.on && v == g_carFly.car))
+				continue;
+			const Vector3 o = natives::GetEntityCoords(v, TRUE);
+			if ((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) > 80.0f * 80.0f)
+				continue;
+			Vector3 mn = {}, mx = {};
+			natives::GetModelDimensions(natives::GetEntityModel(v), &mn, &mx);
+			bool over = true;
+			for (int c = 0; c < 4 && over; ++c)
+			{
+				const Vector3 q = natives::GetOffsetFromEntityInWorldCoords(v, (c & 1) ? mx.x - 0.25f : mn.x + 0.25f,
+					(c & 2) ? mx.y - 0.4f : mn.y + 0.4f, mn.z);
+				over = dug_at(q.x, q.y, q.z - 0.3f);
+			}
+			if (over)
+				drop(v);
+		}
+		const int peds = worldGetAllPeds(handles, 256);
+		for (int i = 0; i < peds; ++i)
+		{
+			const Ped q = handles[i];
+			if (g_pitFalls.count(q) || g_doublePeds.count(q) || (q == player && g_walk.on) || natives::IsPedInAnyVehicle(q, FALSE))
+				continue;
+			const Vector3 o = natives::GetEntityCoords(q, TRUE);
+			if ((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) > 60.0f * 60.0f)
+				continue;
+			if (dug_at(o.x, o.y, o.z - 1.25f))
+			{
+				if (q != player)
+					natives::SetPedToRagdoll(q, 1500);
+				drop(q);
+			}
+		}
 	}
 
 	/// The rows of numbers of a JSON array of arrays ("key":[[1,2],[3,4]]).
@@ -6880,17 +7578,28 @@ namespace
 			return;
 		static const Hash model = natives::GetHashKey("a_m_y_skater_01");
 		natives::RequestModel(model);
-		for (int i = 0; i < 100 && !natives::HasModelLoaded(model); ++i)
-			WAIT(0);
 		if (!natives::HasModelLoaded(model))
+		{
+			later([player, m] { enderthief_message(player, m); });
 			return;
+		}
 		const Ped old = natives::GetPedInVehicleSeat(best, -1);
 		if (old != 0 && old != player)
-			natives::TaskLeaveVehicle(old, best, 16); // (thrown out: the enderman teleported in)
+		{
+			// thrown out at once (the enderman teleported in): the seat must be free for the thief this same moment
+			const Vector3 c = natives::GetOffsetFromEntityInWorldCoords(best, -2.2f, 0.0f, 0.0f);
+			natives::ClearPedTasksImmediately(old);
+			natives::SetEntityCoordsNoOffset(old, c.x, c.y, c.z);
+			natives::SetPedToRagdoll(old, 1500);
+		}
 		natives::SetEntityAsMissionEntity(best);
 		const Ped driver = natives::CreatePedInsideVehicle(best, model, -1);
 		if (driver == 0)
+		{
+			Entity car = best;
+			natives::SetEntityAsNoLongerNeeded(&car); // (not kept for ever)
 			return;
+		}
 		natives::SetEntityVisible(driver, FALSE, FALSE); // (Minecraft's enderman is who's seen at the wheel)
 		natives::SetBlockingOfNonTemporaryEvents(driver, TRUE);
 		natives::SetVehicleEngineOn(best, TRUE);
@@ -7002,41 +7711,7 @@ namespace
 				return;
 			}
 			const Vector3 w = natives::GetBlipInfoIdCoord(natives::GetFirstBlipInfoId(8));
-			const bool inCar = natives::IsPedInAnyVehicle(player, FALSE) != FALSE;
-			const Entity mover = inCar ? Entity(natives::GetVehiclePedIsIn(player, FALSE)) : Entity(player);
-			if (g_drive.on)
-				drive_set(player, false);
-			if (g_carFly.on)
-				car_fly_end();
-			float gz = 0.0f;
-			bool found = false;
-			natives::NewLoadSceneStartSphere(w.x, w.y, 100.0f, 120.0f);
-			for (int i = 0; i < 200 && !found; ++i)
-			{
-				natives::SetEntityCoordsNoOffset(mover, w.x, w.y, 900.0f);
-				natives::RequestCollisionAtCoord(w.x, w.y, 100.0f);
-				for (const float z : {1000.0f, 700.0f, 400.0f, 200.0f, 100.0f, 50.0f, 20.0f})
-					if (natives::GetGroundZFor3dCoord(w.x, w.y, z, &gz, FALSE, FALSE))
-					{
-						found = true;
-						break;
-					}
-				WAIT(0);
-			}
-			natives::NewLoadSceneStop();
-			if (!found)
-				gz = w.z > 1.0f ? w.z : 40.0f;
-			natives::SetEntityCoordsNoOffset(mover, w.x, w.y, gz + (inCar ? 0.6f : 1.0f));
-			natives::SetGameplayCamRelativeHeading(0.0f);
-			if (g_walk.on)
-			{
-				g_walk.x = w.x;
-				g_walk.y = w.y;
-				g_walk.z = g_walk.standZ = gz;
-				g_walk.teleportAt = natives::GetGameTimer();
-			}
-			g_haveOffset = false; // Minecraft's ground starts over here (and its player is put there)
-			natives::Notify("To the ~y~waypoint");
+			land_start(player, w.x, w.y, w.z > 1.0f ? w.z : 40.0f, true, "To the ~y~waypoint");
 		}
 		else if (c == "fly")
 		{
@@ -7045,23 +7720,48 @@ namespace
 		}
 		else if (c == "kill")
 		{
-			// "what": all, people, animals, or one GTA model
-			const std::string what = json_str(m, "what");
-			const Hash model = what.rfind("a_c_", 0) == 0 || what.rfind("u_", 0) == 0 || what.rfind("a_m_", 0) == 0 ? natives::GetHashKey(what.c_str()) : 0;
+			// "what": all, people, animals, or one GTA model; "not": all but that (people, animals, a model); r0..r: how far
+			// from the player (Minecraft's distance=); limit: that many, nearest first
+			const std::string what = json_str(m, "what"), but = json_str(m, "not");
+			auto model_of = [](const std::string &name) -> Hash {
+				if (name.empty() || name == "all" || name == "people" || name == "animals")
+					return 0;
+				const Hash h = natives::GetHashKey(name.c_str());
+				return natives::IsModelValid(h) ? h : 1; // (1: a model GTA hasn't: matches nobody)
+			};
+			const Hash model = model_of(what), notModel = model_of(but);
+			const float r0 = float(json_num(m, "r0", 0.0)), r = std::min(250.0f, float(json_num(m, "r", 250.0)));
+			const int limit = int(json_num(m, "limit", 1e9));
+			auto matches = [](Ped q, const std::string &kind, Hash h) {
+				const bool human = natives::IsPedHuman(q) != FALSE;
+				if (kind == "all")
+					return true;
+				if (kind == "people")
+					return human;
+				if (kind == "animals")
+					return !human;
+				return h != 0 && natives::GetEntityModel(q) == h;
+			};
+			std::vector<std::pair<float, Ped>> victims;
 			int handles[256];
 			const int n = worldGetAllPeds(handles, 256);
-			int killed = 0;
 			for (int i = 0; i < n; ++i)
 			{
 				const Ped q = handles[i];
 				if (q == player || g_doublePeds.count(q) || natives::IsPedDeadOrDying(q))
 					continue;
 				const Vector3 o = natives::GetEntityCoords(q, TRUE);
-				if ((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) > 250.0f * 250.0f)
+				const float d = std::sqrt((o.x - me.x) * (o.x - me.x) + (o.y - me.y) * (o.y - me.y) + (o.z - me.z) * (o.z - me.z));
+				if (d > r || d < r0 || !matches(q, what, model) || (!but.empty() && matches(q, but, notModel)))
 					continue;
-				const bool human = natives::IsPedHuman(q) != FALSE;
-				if ((what == "people" && !human) || (what == "animals" && human) || (model != 0 && natives::GetEntityModel(q) != model))
-					continue;
+				victims.push_back({d, q});
+			}
+			std::sort(victims.begin(), victims.end());
+			int killed = 0;
+			for (const auto &[d, q] : victims)
+			{
+				if (killed >= limit)
+					break;
 				kill_ped(q, natives::GetGameTimer());
 				++killed;
 			}
@@ -7090,6 +7790,7 @@ namespace
 			leash_clear_all(player, false);
 			riders_clear_all(false);
 			dig_clear();
+			loose_clear();
 			natives::ClearArea(me.x, me.y, me.z, 400.0f);
 			natives::StopFireInRange(me.x, me.y, me.z, 400.0f);
 			natives::Notify("Cleared: Minecraft's mobs, items and blocks, and GTA's cars, people and fires around you");
@@ -7172,15 +7873,29 @@ namespace
 		{
 			const float dist = g_walkCam.mode == 0 ? 2.8f : g_walkCam.mode == 1 ? 4.0f : 5.5f;
 			float keep = dist;
-			BOOL hit = FALSE;
 			Vector3 at = {}, n = {};
 			Entity e = 0;
-			const int probe = natives::StartShapeTestLosProbe(ex, ey, ez, ex - fx * dist, ey - fy * dist, ez - fz * dist, 1 | 2 | 16, ped, 7);
-			if (!g_mcSpectator && natives::GetShapeTestResult(probe, &hit, &at, &n, &e) == 2 && hit)
+			// (GTA's surfaces mined out don't stop it: world_probe passes them)
+			Hash material = 0;
+			if (!g_mcSpectator && world_probe(ped, ex, ey, ez, ex - fx * dist, ey - fy * dist, ez - fz * dist, 1 | 2 | 16, 7, at, n, e, material) &&
+				(e == 0 || !g_props.handles.count(e)))
 			{
 				const float d = std::sqrt((at.x - ex) * (at.x - ex) + (at.y - ey) * (at.y - ey) + (at.z - ez) * (at.z - ez));
 				keep = std::max(0.15f, d - 0.3f);
 			}
+			// nor through Minecraft's blocks (its own, and a mined hole's sides): in a tunnel it stays in the tunnel, and
+			// doesn't look at GTA's world from underneath
+			if (!g_mcSpectator && (!g_props.blocks.empty() || !g_digFill.empty()))
+				for (float t = 0.1f; t <= keep; t += 0.1f)
+				{
+					const float px = ex - fx * t, py = ey - fy * t, pz = ez - fz * t;
+					const int bx = int(std::floor(px)), by = int(std::floor(pz + g_yOffset)), bz = int(std::floor(-py));
+					if (g_digFill.count(cell_key(bx, by, bz)) || g_props.blocks.count(std::make_tuple(bx, by, bz)))
+					{
+						keep = std::max(0.15f, t - 0.25f);
+						break;
+					}
+				}
 			cx = ex - fx * keep;
 			cy = ey - fy * keep;
 			cz = ez - fz * keep;
@@ -7284,8 +7999,22 @@ namespace
 			if (natives::GetShapeTestResultIncludingMaterial(probe, &hit, &end, &normal, &material, &entity) == 2 && hit && breakable_glass(material))
 				glass = (end.x - c.x) * fx + (end.y - c.y) * fy + (end.z - c.z) * fz;
 		}
+		// seated: how far from the camera the car's own body reaches (its windows and pillars let him show; what's beyond
+		// it, a wall or another car close in front, doesn't)
+		float carFar = 0.0f;
+		if (seated && natives::IsPedInAnyVehicle(ped, FALSE))
+		{
+			const Vehicle v = natives::GetVehiclePedIsIn(ped, FALSE);
+			Vector3 mn = {}, mx = {};
+			natives::GetModelDimensions(natives::GetEntityModel(v), &mn, &mx);
+			for (int i = 0; i < 8; ++i)
+			{
+				const Vector3 q = natives::GetOffsetFromEntityInWorldCoords(v, (i & 1) ? mx.x : mn.x, (i & 2) ? mx.y : mn.y, (i & 4) ? mx.z : mn.z);
+				carFar = std::max(carFar, (q.x - c.x) * fx + (q.y - c.y) * fy + (q.z - c.z) * fz + 0.1f);
+			}
+		}
 		compositor::set_steve(std::max(0.0f, x0 - 0.02f), std::max(0.0f, y0 - 0.02f), std::min(1.0f, x1 + 0.02f), std::min(1.0f, y1 + 0.02f),
-			std::max(0.0f, dn), df, glass, sx, sz + g_yOffset, -sy, ht, seated);
+			std::max(0.0f, dn), df, glass, sx, sz + g_yOffset, -sy, ht, seated, carFar);
 	}
 
 	bool rig_pose(Ped who, bool seated, Rig &out)
@@ -7431,6 +8160,7 @@ namespace
 		g_settings.invertLook = GetPrivateProfileIntA("Minecraft", "InvertLook", 0, path) != 0;
 		g_settings.freeLook = GetPrivateProfileIntA("Minecraft", "FreeLook", 1, path) != 0;
 		g_settings.keepMinimap = GetPrivateProfileIntA("Minecraft", "KeepMinimap", 0, path) != 0;
+		g_settings.director = GetPrivateProfileIntA("Minecraft", "Director", 0, path) != 0;
 	}
 
 	float g_lastX = 0.0f, g_lastY = 0.0f;
@@ -7459,7 +8189,9 @@ namespace
 		const bool on = g_enabled && g_ws.connected();
 		const Player player = natives::PlayerId();
 		// cutscenes, character switches, death and arrest play out GTA's way (Steve stands in for the player all the same)
-		const bool scene = natives::IsCutsceneActive() || natives::IsCutscenePlaying() || natives::IsPlayerSwitchInProgress() ||
+		// (a cutscene playing, not one a mission has only loaded ahead: the prologue keeps the next one loaded while it's
+		// played, which took Minecraft away for half of it)
+		const bool scene = natives::IsCutscenePlaying() || natives::IsPlayerSwitchInProgress() ||
 			natives::IsEntityDead(ped) || natives::IsPlayerBeingArrested(player);
 		const bool hidden = natives::IsPauseMenuActive() || natives::IsScreenFadedOut();
 		// loading screens, fades, warnings and missions that take the player's control: no Minecraft input either
@@ -7476,6 +8208,12 @@ namespace
 				natives::UnlockMinimapAngle();
 				g_mapLocked = false;
 			}
+			// an elytra flight or a flying car mid-air: back to GTA's own control (camera, player unfrozen, the car falls)
+			if (g_drive.on)
+				drive_set(ped, false, true);
+			g_drive.armed = false;
+			car_fly_end();
+			totem_unbuffer();
 			walk_set(ped, false);
 			walk_cam_end();
 			if (!g_props.live.empty())
@@ -7583,9 +8321,10 @@ namespace
 		int input = 0;
 		float waterTop = 0.0f;
 		const bool swimming = g_walk.on && natives::GetWaterHeight(g_walk.x, g_walk.y, g_walk.z + 2.0f, &waterTop) && waterTop > g_walk.z + 0.3f;
-		const bool flying = g_mcFlying || g_flyAllowed || g_carFly.on || swimming; // (Space is up then, swimming too: no climbing)
+		// actually flying (not just /fly allowed), or swimming: Space is up then, no climbing ledges; F's ladders always
+		const bool flying = g_mcFlying || g_carFly.on || swimming;
 		g_doing = "Minecraft movement";
-		if (g_walk.on && !(!screen && !g_mcSpectator && !flying && (walk_climb(ped) || walk_ladder(ped))))
+		if (g_walk.on && !(!screen && !g_mcSpectator && ((!flying && walk_climb(ped)) || walk_ladder(ped))))
 			input = walk_tick(ped, screen);
 		// a flying car (in the driver's seat, Space twice)
 		if (!g_walk.on)
@@ -7600,6 +8339,9 @@ namespace
 		bow_tick(ped);
 		g_doing = "leads";
 		leash_tick(ped);
+		loose_tick(ped);
+		later_tick();
+		landing_tick(ped);
 		g_doing = "boats";
 		boats_tick(ped);
 		g_doing = "the rest of the frame";
@@ -7749,7 +8491,7 @@ namespace
 			}
 			const bool dead = natives::IsEntityDead(ped) || natives::IsPedDeadOrDying(ped);
 			// GTA's health, armour and stamina, for Minecraft's hearts, armour and hunger bars
-			const int hp = std::max(0, natives::GetEntityHealth(ped) - 100), hpMax = std::max(1, natives::GetEntityMaxHealth(ped) - 100);
+			const int hp = std::max(0, real_health(ped) - 100), hpMax = std::max(1, real_max_health(ped) - 100);
 			char bars[128];
 			snprintf(bars, sizeof(bars), ",\"hp\":[%d,%d],\"ar\":%d,\"st\":%.1f,\"fly\":%s,\"ht\":%.3f,\"rain\":%.2f", hp, hpMax,
 				natives::GetPedArmour(ped), g_stamina, g_carFly.on ? "true" : "false", g_steveHeight, natives::GetRainLevel());
@@ -7758,7 +8500,7 @@ namespace
 				  "\"gh\":[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.0f,%.0f],\"ghOn\":%s,\"ctl\":%s%s%s}",
 				natives::GetFrameCount(), c.x, c.z + g_yOffset, -c.y, mcYaw, mcPitch, mcRoll, fov, firstPerson ? "true" : "false", sx,
 				sz + g_yOffset, -sy, wrap_degrees(180.0f - natives::GetEntityHeading(who)), holding_gta_weapon(ped) && !scene ? "true" : "false",
-				sit && !g_carFly.on ? "true" : "false", "false", ax, ay, az, aim ? "true" : "false",
+				sit && !g_carFly.on ? "true" : "false", !scene && natives::GetPedStealthMovement(ped) ? "true" : "false", ax, ay, az, aim ? "true" : "false",
 				g_walk.on || g_carFly.on ? "true" : "false", input, dead ? "true" : "false", bp[0], bp[1], bp[2], bp[3], bp[4], bp[5], bp[6], bp[7], hasBlock ? "true" : "false",
 				control ? "true" : "false", rigJson, bars);
 			// (first person: Minecraft puts its player's eyes at the camera, so its feet are 1.62 m under it)
@@ -7776,6 +8518,7 @@ namespace
 		// character too (and Minecraft's HUD hides)
 		hide_player(ped);
 		dig_grid_tick();
+		pit_tick(ped);
 		if (scene)
 			natives::SetEntityLocallyInvisible(ped);
 		if (who != ped)
@@ -7790,9 +8533,22 @@ namespace
 			// Tab: GTA's weapons or Minecraft's items (not while flying)
 			if (!screen && !g_drive.on && natives::IsDisabledControlJustPressed(0, 37))
 				hands_set(ped, !g_gtaHands);
-			if (!gun)
+			// a mission's people react only to GTA's own aiming (the prologue's hostages): Minecraft's bow drawn in a
+			// mission aims GTA's player's gun along with it, unseen (Steve's bow is what shows; it never fires)
+			const Hash missionGun = !gun && g_bowDrawn && natives::GetMissionFlag()
+				? (g_gtaWeapon != 0 && natives::HasPedGotWeapon(ped, g_gtaWeapon) ? g_gtaWeapon : natives::GetBestPedWeapon(ped))
+				: kWeaponUnarmed;
+			if (missionGun != kWeaponUnarmed && missionGun != 0)
+			{
+				if (natives::GetSelectedPedWeapon(ped) != missionGun)
+					natives::SetCurrentPedWeapon(ped, missionGun, TRUE);
+				natives::SetPedCurrentWeaponVisible(ped, FALSE);
+				g_missionAim = true;
+			}
+			else if (!gun)
 			{
 				// Minecraft's items in hand: a weapon a mission gives GTA's player waits for Tab
+				g_missionAim = false;
 				const Hash w = natives::GetSelectedPedWeapon(ped);
 				if (w != kWeaponUnarmed)
 				{
@@ -7800,6 +8556,8 @@ namespace
 					natives::SetCurrentPedWeapon(ped, kWeaponUnarmed, TRUE);
 				}
 			}
+			else
+				g_missionAim = false;
 			if (!screen)
 			{
 				if (gun)
@@ -7815,7 +8573,10 @@ namespace
 				else
 				{
 					for (int control : kDisabledControls)
-						natives::DisableControlAction(0, control, TRUE);
+						if (!g_missionAim || control != 25) // (aiming along with the bow in a mission)
+							natives::DisableControlAction(0, control, TRUE);
+					if (g_missionAim)
+						natives::SetControlValueNextFrame(0, 25, 1.0f);
 					forward_button(24, "attack");
 					forward_button(25, "use");
 					forward_button(44, "drop"); // Q (GTA's cover key)
@@ -7835,7 +8596,10 @@ namespace
 							g_wantInventory = true;
 					}
 				}
-				// E or I: Minecraft's inventory, T: its chat (either hands)
+				// E or I: Minecraft's inventory, T: its chat (either hands). Not while GTA's own keyboard (a name, a cheat)
+				// or the phone takes the keys: those letters were being typed there
+				if (natives::UpdateOnscreenKeyboard() == 0 || natives::CanPhoneBeSeenOnScreen())
+					g_wantChat = g_wantInventory = false;
 				if (g_wantInventory.exchange(false))
 				{
 					g_ws.send("{\"t\":\"key\",\"k\":\"inventory\",\"down\":true}");
