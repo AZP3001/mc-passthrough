@@ -68,6 +68,8 @@ async def main():
                 cols += [x, z, 56 if sea else 62, 57 if sea else 63]
                 if sea:
                     water += [x, z, 58, 66 * 256]
+                elif -15 <= x <= -12 and -3 <= z <= 3:
+                    water += [x, z, 64, int(64.3 * 256)]  # a foot-deep puddle of the host's water on its ground
         await ws.send(json.dumps({"t": "ground", "c": cols}))
         await ws.send(json.dumps({"t": "gwater", "c": water}))
         # the host's collision for the player Minecraft moves: its sea floor (top y 58) under the water
@@ -156,6 +158,17 @@ async def main():
         await check("if entity @e[type=experience_orb]", "rabbit", "a_c_rabbit_01", "a kill in the host's world drops experience")
         await ws.send(json.dumps({"t": "hitmark", "kill": True, "shot": False}))
         await asyncio.sleep(0.3)
+
+        # foot-deep host water: in water, and a riptide launches from it
+        state["pos"] = [-13.5, 64.0, 0.5]
+        await asyncio.sleep(1.0)
+        await check(f"as @p if predicate {IN_WATER}", "cow", "a_c_cow", "foot-deep host water: in water in Minecraft")
+        inbox.clear()
+        await ws.send(json.dumps({"t": "key", "k": "use", "down": True}))
+        await asyncio.sleep(0.9)
+        await ws.send(json.dumps({"t": "key", "k": "use", "down": False}))
+        await expect(inbox, lambda j: j.get("t") == "riptide", 3, "a riptide trident launches in foot-deep host water")
+        await asyncio.sleep(1.5)
 
         # and not on the host's dry ground
         state["pos"] = [-10.5, 64.0, 0.5]

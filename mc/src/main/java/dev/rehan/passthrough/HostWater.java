@@ -19,6 +19,14 @@ public final class HostWater {
 	/** Column (x, z) -> its water: bottom cell y in the high half, the surface's height in 1/256 blocks in the low half. */
 	private static volatile Long2LongMap columns = new Long2LongOpenHashMap();
 	private static final FluidState WATER = Fluids.WATER.getSource(false);
+	/** Shallow water, by its height in ninths of a block (Minecraft's flowing water levels 1..7). */
+	private static final FluidState[] SHALLOW = new FluidState[8];
+
+	static {
+		for (int amount = 1; amount <= 7; amount++) {
+			SHALLOW[amount] = Fluids.WATER.getFlowing(amount, false);
+		}
+	}
 
 	private HostWater() {
 	}
@@ -94,7 +102,11 @@ public final class HostWater {
 		return true;
 	}
 
-	/** The host's water in this cell (a cell is water when the surface is over its middle), or null. */
+	/**
+	 * The host's water in this cell, or null: a full source under the surface, and where the surface crosses the cell,
+	 * water as high as it really is there (foot-deep water is shallow water to Minecraft: a riptide trident works in it,
+	 * and Minecraft wades and swims in it as in its own; counted only from half a block deep, it was dry ground).
+	 */
 	public static FluidState at(final BlockPos pos) {
 		Long2LongMap map = columns;
 		if (map.isEmpty()) {
@@ -107,7 +119,11 @@ public final class HostWater {
 		}
 
 		int bottom = (int) (v >> 32);
-		int surface256 = (int) v;
-		return pos.getY() >= bottom && pos.getY() * 256 + 128 <= surface256 ? WATER : null;
+		int depth256 = (int) v - pos.getY() * 256; // how far the surface is over this cell's floor (1/256 block)
+		if (pos.getY() < bottom || depth256 < 10) {
+			return null;
+		}
+
+		return depth256 >= 228 ? WATER : SHALLOW[Math.clamp(Math.round(depth256 * 9 / 256.0F), 1, 7)];
 	}
 }

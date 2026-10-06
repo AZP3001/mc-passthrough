@@ -402,6 +402,9 @@ namespace
 	void world_mobs_message(const std::string &m);
 	void leash_use(Ped player, const std::string &m);
 	float entity_mass(Entity e);
+	constexpr Hash kWaterMaterial = 0x19F81600; // GTA's water (MaterialHash.Water)
+	constexpr Hash kPuddleMaterial = 0x3B982E13; // a puddle on the street
+	Vector3 v3(float x, float y, float z);
 	bool world_probe(Entity ignore, float x0, float y0, float z0, float x1, float y1, float z1, int flags, int options, Vector3 &at,
 		Vector3 &normal, Entity &entity, Hash &material);
 	bool solid_probe(Ped ped, float x0, float y0, float z0, float x1, float y1, float z1, Vector3 &at, Vector3 &normal);
@@ -761,17 +764,18 @@ namespace
 			// wall's face crossing the column (a probe starting inside a thick wall doesn't see it from above)
 			int wallTop = top;
 			{
-				BOOL hit = FALSE;
+				// (world_probe: shallow water's surface isn't something standing there: it put barriers on the water)
 				Vector3 at = {}, n = {};
 				Entity e = 0;
-				const int probe = natives::StartShapeTestLosProbe(cx, cy, groundZ + 1.8f, cx, cy, groundZ + 0.45f, 1 | 16, ped, 7);
-				if (natives::GetShapeTestResult(probe, &hit, &at, &n, &e) == 2 && hit && at.z > groundZ + 0.5f && (e == 0 || !g_props.handles.count(e)))
+				Hash material = 0;
+				if (world_probe(ped, cx, cy, groundZ + 1.8f, cx, cy, groundZ + 0.45f, 1 | 16, 7, at, n, e, material) && at.z > groundZ + 0.5f &&
+					(e == 0 || !g_props.handles.count(e)))
 					wallTop = std::max(top, int(std::floor(at.z + g_yOffset + 0.5f)) - 1);
 				for (int axis = 0; axis < 2 && wallTop < top + 2; ++axis)
 				{
 					const float ax = axis == 0 ? 0.45f : 0.0f, ay = axis == 0 ? 0.0f : 0.45f;
-					const int across = natives::StartShapeTestLosProbe(cx - ax, cy - ay, groundZ + 1.0f, cx + ax, cy + ay, groundZ + 1.0f, 1 | 16, ped, 7);
-					if (natives::GetShapeTestResult(across, &hit, &at, &n, &e) == 2 && hit && (e == 0 || !g_props.handles.count(e)))
+					if (world_probe(ped, cx - ax, cy - ay, groundZ + 1.0f, cx + ax, cy + ay, groundZ + 1.0f, 1 | 16, 7, at, n, e, material) &&
+						(e == 0 || !g_props.handles.count(e)))
 						wallTop = top + 2;
 				}
 			}
@@ -4874,8 +4878,11 @@ namespace
 			const int probe = natives::StartShapeTestLosProbe(sx, sy, sz, x1, y1, z1, flags, ignore, options);
 			if (natives::GetShapeTestResultIncludingMaterial(probe, &hit, &at, &normal, &material, &entity) != 2 || !hit)
 				return false;
+			// GTA's water surface isn't a floor or a wall (Minecraft swims in it: stood on, it was walked on and built on)
+			const bool water = material == kWaterMaterial;
 			// (a surface on a dug cell's edge counts as in it, from either side: the street over a hole dug under it)
-			if (g_dug.empty() || !(dug_at(at.x + ux * 0.03f, at.y + uy * 0.03f, at.z + uz * 0.03f) || dug_at(at.x - ux * 0.03f, at.y - uy * 0.03f, at.z - uz * 0.03f)))
+			if (!water && (g_dug.empty() || !(dug_at(at.x + ux * 0.03f, at.y + uy * 0.03f, at.z + uz * 0.03f) ||
+				dug_at(at.x - ux * 0.03f, at.y - uy * 0.03f, at.z - uz * 0.03f))))
 				return true;
 			sx = at.x + ux * 0.05f;
 			sy = at.y + uy * 0.05f;
@@ -8646,9 +8653,29 @@ namespace
 				else
 					air = std::clamp(left / std::max(1.0f, most), 0.0f, 1.0f);
 			}
+			// wet: GTA's rain (a drizzle too), or a puddle under the player's feet: Minecraft's rain for its player (a
+			// riptide trident works there)
+			float wet = natives::GetRainLevel();
+			{
+				static int nextPuddle = 0;
+				static bool puddle = false;
+				const int now = natives::GetGameTimer();
+				if (now >= nextPuddle)
+				{
+					nextPuddle = now + 250;
+					const Vector3 feet = g_walk.on ? v3(g_walk.x, g_walk.y, g_walk.z) : v3(p.x, p.y, p.z - 1.0f);
+					Vector3 at = {}, n = {};
+					Entity e = 0;
+					Hash material = 0;
+					puddle = world_probe(ped, feet.x, feet.y, feet.z + 0.4f, feet.x, feet.y, feet.z - 0.4f, 1, 7, at, n, e, material) &&
+						material == kPuddleMaterial;
+				}
+				if (puddle)
+					wet = 1.0f;
+			}
 			char bars[160];
 			snprintf(bars, sizeof(bars), ",\"hp\":[%d,%d],\"ar\":%d,\"st\":%.1f,\"fly\":%s,\"ht\":%.3f,\"rain\":%.2f,\"air\":%.3f", hp, hpMax,
-				natives::GetPedArmour(ped), g_stamina, g_carFly.on ? "true" : "false", g_steveHeight, natives::GetRainLevel(), air);
+				natives::GetPedArmour(ped), g_stamina, g_carFly.on ? "true" : "false", g_steveHeight, wet, air);
 			sendf("{\"t\":\"cam\",\"f\":%d,\"p\":[%.4f,%.4f,%.4f],\"r\":[%.3f,%.3f,%.3f],\"fov\":%.3f,\"fp\":%s,\"pl\":[%.4f,%.4f,%.4f],\"h\":%.3f,"
 				  "\"gun\":%s,\"veh\":%s,\"sn\":%s,\"aim\":[%.3f,%.3f,%.3f],\"aimOn\":%s,\"walk\":%s,\"in\":%d,\"dead\":%s,"
 				  "\"gh\":[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.0f,%.0f],\"ghOn\":%s,\"ctl\":%s%s%s}",

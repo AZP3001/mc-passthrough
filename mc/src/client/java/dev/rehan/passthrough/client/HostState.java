@@ -102,7 +102,7 @@ public final class HostState {
 		}
 
 		lastHealth = pose.health();
-		Passthrough.hostRain = m.has("rain") && m.get("rain").getAsFloat() > 0.15F;
+		Passthrough.hostRain = m.has("rain") && m.get("rain").getAsFloat() > 0.05F; // (a drizzle, or a puddle underfoot)
 		Passthrough.hostAir = m.has("air") ? m.get("air").getAsFloat() : -1.0F;
 		latest = pose;
 		Passthrough.hostHit = pose.hostHit();

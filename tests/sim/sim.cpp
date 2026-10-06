@@ -421,13 +421,15 @@ PUINT64 nativeCall()
 		n->x = g_lastHit.nx;
 		n->y = g_lastHit.ny;
 		n->z = g_lastHit.nz;
+		// (entity -9: GTA's water surface, as its probes may report it: material Water, no entity)
+		const bool water = g_lastHit.entity == -9;
 		if (mat)
 		{
-			*P<Hash>(4) = 0;
-			*P<Entity>(5) = g_lastHit.entity;
+			*P<Hash>(4) = water ? 0x19F81600 : 0;
+			*P<Entity>(5) = water ? 0 : g_lastHit.entity;
 		}
 		else
-			*P<Entity>(4) = g_lastHit.entity;
+			*P<Entity>(4) = water ? 0 : g_lastHit.entity;
 		retI(2);
 	}
 	else if (h == H_GetGroundZFor3dCoord)
@@ -1158,6 +1160,15 @@ int main()
 		check(kills == 1 && xp == 1, "and their death is Minecraft's kill: its marker and experience orbs, once");
 		g_world.pop_back();
 		g_npcs.erase(7);
+	}
+
+	// ---- GTA's water surface, if its probes report it: not a floor (Minecraft swims there) nor a place to build on ----
+	{
+		g_world.push_back({g_walk.x - 5.0f, g_walk.y - 5.0f, 11.1f, g_walk.x + 5.0f, g_walk.y + 5.0f, 11.2f, -9});
+		Vector3 at = {}, n = {};
+		const bool hit = solid_probe(1, g_walk.x + 2.0f, g_walk.y, 13.0f, g_walk.x + 2.0f, g_walk.y, 9.0f, at, n);
+		check(hit && at.z < 10.5f, "GTA's water surface isn't a floor: the probe goes on down to the bed");
+		g_world.pop_back();
 	}
 
 	// ---- a fishing bobber cast into GTA's water: it splashes and floats there (not traced to the bed and ended) ----
