@@ -40,6 +40,7 @@
 #define H_HasWeaponAssetLoaded 0x36E353271F0E90EEull
 #define H_CreateWeaponObject 0x9541D3CF0D398F36ull
 #define H_StartShapeTestLosProbe 0x377906D8A31E5586ull
+#define H_StartShapeTestCapsule 0x28579D1B8F8AAC80ull
 #define H_GetShapeTestResult 0x3D87450E15D98694ull
 #define H_SetVehicleCanBeVisiblyDamaged 0x4C7028F78FFD3681ull
 #define H_IsPedSprinting 0x57E457CD2C0FC168ull
@@ -138,6 +139,7 @@
 #define H_SetPedToRagdoll 0xAE99FB955581844Aull
 #define H_ApplyDamageToPed 0x697157CED63F18D4ull
 #define H_ApplyForceToEntity 0xC5F68BE9613E2D18ull
+#define H_ApplyForceToEntityAt 0xC5F68BE9613E2D18ull
 #define H_IsPedDeadOrDying 0x3317DEDB88C95038ull
 #define H_AddRelationshipGroup 0xF372BC22FCB88606ull
 #define H_SetRelationshipBetweenGroups 0xBF25EB89375A37ADull
@@ -247,6 +249,10 @@
 #define H_IsHudHidden 0xA86478C6958735C5ull
 #define H_GetSelectedPedWeapon 0x0A6DB4965674D243ull
 #define H_HasPedGotWeapon 0x8DECB02F88F428BCull
+#define H_TaskSkyDive 0x601736CFE536B0A0ull
+#define H_IsPedRunningMobilePhoneTask 0x2AFE52F782F25775ull
+#define H_GetStateOfClosestDoorOfType 0xEDC1A5B84AEF33FFull
+#define H_IsSpecialAbilityActive 0x3E5F7FC85D854E15ull
 #define H_GetMissionFlag 0xA33CDCCDA663159Eull
 #define H_DoesVehicleHaveWeapons 0x25ECB9F8017D98E0ull
 #define H_GetPlayerUnderwaterTimeRemaining 0xA1FCF8E6AF40B731ull
@@ -254,6 +260,11 @@
 #define H_IsPedInCover 0x60DFD0691A170B88ull
 #define H_GetRenderingCam 0x5234F9F10919EABAull
 #define H_IsEntityInWater 0xCFB0A0D8EDD145A3ull
+#define H_GetVehicleMaxNumberOfPassengers 0xA7C4F2C6E744A550ull
+#define H_IsPedInCombat 0x4859F1FC66A6278Eull
+#define H_IsPedArmed 0x475768A975D5AD17ull
+#define H_TaskLookAtEntity 0x69F4BE8C8CC4796Cull
+#define H_TaskTurnPedToFaceEntity 0x5AD23D40115353ACull
 #define H_SetControlValueNextFrame 0xE8A25867FBA3B05Eull
 #define H_GetBestPedWeapon 0x8483E98E8B888AE2ull
 #define H_IsEntityDead 0x5F9532F3B5CC2551ull

@@ -17,6 +17,7 @@ import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.player.Abilities;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.Block;
@@ -45,6 +46,12 @@ public final class HostBridge {
 		Map.entry("ocelot", "a_c_mtlion"), Map.entry("dolphin", "a_c_dolphin"), Map.entry("cod", "a_c_fish"), Map.entry("salmon", "a_c_fish"),
 		Map.entry("tropical_fish", "a_c_fish")
 	);
+	/**
+	 * Damage past Minecraft's player's last health point (a long fall, a creeper at close range): Minecraft's player is
+	 * kept at 1 (the host decides when the player dies), and this much more goes to the host with the rest. Server thread.
+	 */
+	public static float overkill;
+
 	/** The player's reach in blocks (/range). */
 	public static volatile double reach = 8.0;
 	private static final double SPEED = 0.14; // Minecraft's own is 0.1
@@ -123,15 +130,37 @@ public final class HostBridge {
 			player.setAirSupply(Math.round(air * player.getMaxAirSupply()));
 		}
 
+		// a fall while the host moves the player (its own movement: a jump, a skydive) is the host's to hurt for
+		if (on && !Passthrough.walking) {
+			player.resetFallDistance();
+		}
+
+		// creative while a host is attached: Minecraft's survival dangers all the same (mobs hunt the player, fire burns,
+		// water drowns, falls hurt: the host's health takes it), with creative's building and inventory kept; never
+		// hungry (the hunger bar is the host's stamina)
+		if (player.isCreative()) {
+			Abilities abilities = player.getAbilities();
+			if (abilities.invulnerable == on) {
+				abilities.invulnerable = !on;
+				player.onUpdateAbilities();
+			}
+
+			if (on && player.getFoodData().getFoodLevel() < 20) {
+				player.getFoodData().setFoodLevel(20);
+			}
+		}
+
 		float host = Passthrough.hostHealth;
-		if (!on || host < 0.0F || player.isCreative() || player.isSpectator() || !player.isAlive()) {
+		if (!on || host < 0.0F || player.isSpectator() || !player.isAlive()) {
 			healthSet = -1.0F;
+			overkill = 0.0F;
 			return;
 		}
 
 		// what Minecraft did to its player since (a mob's hit, a fall, drowning) goes to the host's player
-		if (healthSet > 0.0F && player.getHealth() < healthSet - 0.01F) {
-			Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"pdmg\",\"d\":%.2f}", healthSet - player.getHealth()));
+		if (healthSet > 0.0F && (player.getHealth() < healthSet - 0.01F || overkill > 0.0F)) {
+			Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"pdmg\",\"d\":%.2f}", Math.max(0.0F, healthSet - player.getHealth()) + overkill));
+			overkill = 0.0F;
 		} else if (healthSet > 0.0F && player.getHealth() > healthSet + 0.01F) {
 			// and what healed it (a potion, regeneration, food) heals the host's player
 			Passthrough.events.accept(String.format(Locale.ROOT, "{\"t\":\"pheal\",\"d\":%.2f}", player.getHealth() - healthSet));
@@ -238,8 +267,29 @@ public final class HostBridge {
 	 * the Nether and the End close; the host clears its cars, people and fires around the player too. Server thread.
 	 */
 	static int clearAll(final MinecraftServer s, final ServerPlayer player) {
+		return clearAll(s, player, true);
+	}
+
+	/**
+	 * The host restarted a mission or loaded a checkpoint: Minecraft's things go (as /clearall), but the host keeps its
+	 * own cars and people (the mission's). Any thread.
+	 */
+	public static void missionRestart() {
+		MinecraftServer s = WorldBridge.server();
+		if (s != null) {
+			s.execute(() -> {
+				ServerPlayer player = s.getPlayerList().getPlayers().isEmpty() ? null : s.getPlayerList().getPlayers().get(0);
+				if (player != null) {
+					int blocks = clearAll(s, player, false);
+					player.sendSystemMessage(net.minecraft.network.chat.Component.literal("Mission restarted: Minecraft's things cleared (" + blocks + " blocks)."));
+				}
+			});
+		}
+	}
+
+	/** hostToo: the host clears its own cars, people and fires round the player too (/clearall). */
+	static int clearAll(final MinecraftServer s, final ServerPlayer player, final boolean hostToo) {
 		ServerLevel level = s.overworld();
-		HostDig.clearAll(level); // (first: the host's ground back where it was mined, before the blocks go)
 		Nether.closeIfOpen(level);
 		TheEnd.closeIfOpen(level);
 		List<Entity> gone = new ArrayList<>();
@@ -284,7 +334,7 @@ public final class HostBridge {
 			}
 		}
 
-		Passthrough.events.accept("{\"t\":\"gtacmd\",\"c\":\"clearall\"}");
+		Passthrough.events.accept(hostToo ? "{\"t\":\"gtacmd\",\"c\":\"clearall\"}" : "{\"t\":\"gtacmd\",\"c\":\"clearall\",\"soft\":true}");
 		return blocks;
 	}
 

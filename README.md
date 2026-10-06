@@ -22,8 +22,13 @@ You play GTA's story as Steve, with Minecraft's items, blocks, mobs and movement
   grade, and solid (not see-through or glowing).
 
 **Minecraft movement** (F6 turns it on and off)
-- On foot, Minecraft moves you, exactly as in Minecraft but 40% faster. That covers walking, Shift to sprint, Ctrl to
+- On foot, Minecraft moves you, exactly as in Minecraft but 40% faster. That covers walking, Shift to sprint, C to
   sneak, its jump, swimming (in GTA's water too), ladders, slime, elytra, riding and knockback.
+- Falls are GTA's: you speed up as GTA's characters do (9.8 m/s per second, up to about 52 m/s) and a long fall hurts
+  (or kills) as Minecraft's fall damage, so you need a parachute or a water bucket. With a parachute on, a long fall
+  hands over to GTA's skydive (F opens it).
+- Falling through GTA's world, you're put back on its ground; Minecraft's void never kills you.
+- Q takes cover, GTA's way. Unlocked doors open as you walk through them.
 - GTA's floors, walls and ceilings are your collision.
 - Free look: the mouse looks all the way up and down, so you can bridge and pillar up. V switches first and third
   person.
@@ -39,26 +44,18 @@ You play GTA's story as Steve, with Minecraft's items, blocks, mobs and movement
 - Minecraft's fire and lava set fire to everything by them: people (alive or not), cars and things. Minecraft's fire
   also burns as GTA's own fire, so it spreads to grass, people and cars the way GTA's does.
 
-**Mining GTA's world** (a pickaxe only)
-- Hold left click with a pickaxe on GTA's walls, streets, ground or a door and it's mined as in survival: Minecraft's
-  cracks, the time your pickaxe takes (Efficiency and Haste count), its sounds and particles, the pickaxe wearing out,
-  and a drop (cobblestone from rock and concrete, dirt from ground, sand, planks from wood, iron nuggets from metal).
-- A mined cell is gone: you walk or fall through it, and GTA's surface is cut out of the picture there. The cells around
-  it that are still inside GTA's solid world (the wall, the ground under the street) become Minecraft blocks, which are
-  the hole's sides. They mine on in the same way, so you can dig under the street or tunnel into a building.
-- A door or another of GTA's things mined is taken away.
-- GTA's cars and people fall into a mined pit (a car when the pit is under all of it) and stand on its floor.
-- Where nothing of Minecraft's is behind a mined spot (a wall mined through into a room GTA never drew), it shows as a
-  dark hole, not GTA's wall.
-- `/clearall` puts all of it back.
-
 **Weapons**
-- Swords give Minecraft's knockback (20% stronger) without knocking people down; the Knockback enchantment knocks them
-  down.
+- Swords give Minecraft's knockback (20% stronger) without knocking people down; the Knockback enchantment sends them
+  flying (they're hurt once they're on their way, so a killing blow still throws them).
+- Punching a sign, bin or lamp post (or shooting it with a Punch bow) knocks it loose and flies it.
 - Axes, maces, tridents, spears and fists all hit GTA's people and cars. Hitting a car dents it where you hit:
   a fist a little, an axe a lot.
 - Enchantments work in GTA: Sharpness (more damage), Knockback, Fire Aspect (sets on fire), Looting (people drop more
   money), and Power, Punch and Flame on bows.
+- Straight (the mod's own bow enchantment, one level, from the enchanting table or `/enchant`): the arrow flies dead
+  straight with no gravity, and is gone after 500 blocks.
+- A drawn bow or crossbow pointed at someone: they put their hands up (or run). Cops, soldiers and anyone fighting only
+  look at you. Pointed at a car, only that car's people get out with their hands up.
 - Arrows hit people and cars, burst the tyre they hit, and break GTA's glass (shop windows, car windows).
 - Ender pearls fly 2.5× as far and land on GTA's walls, floors and ceilings. Thrown from a car, the car comes with you.
 - TNT and creepers blow up in both games. Fireworks become rockets, and you can throw potions, wind charges and
@@ -67,16 +64,17 @@ You play GTA's story as Steve, with Minecraft's items, blocks, mobs and movement
 **Leads and boats**
 - Right-click a GTA person, car, sign, door or anything loose with a lead and it's on the lead in your hand. Minecraft
   draws the lead.
-- What you can pull depends on its weight. Slim people walk after you, and bodies, signs, bins and small doors are
-  dragged along. Heavy-set people, lamp posts and cars don't move, and the lead holds you back instead. A Strength
+- What you can pull depends on its weight. Slim people walk after you; pulled hard, people are dragged along the
+  ground on their back, and bodies, signs, bins and small doors are dragged too. Heavy-set people, lamp posts and cars don't move, and the lead holds you back instead. A Strength
   potion lets you pull more.
 - Holding leads, right-click something else to tie them there: another person, a car, a door, a wall, the street, a
   ceiling, or one of your blocks. Right-click the thing you're leading again to let go of it.
 - When no lead is in your hand, right-click a tied thing (or the spot it's tied to) with a lead to take its lead back.
   Shears cut every lead on what you click.
 - Tied things can't get further than the lead: a person tied to a lamp post stays there, and a car tied to a wall
-  can't drive off. A car tied to a person drags them, and a car tied to another car tows it. Stretched past 11 blocks,
-  a lead snaps.
+  can't drive off. A car tied to a person drags them, and a car tied to another car tows it. Two of GTA's people or
+  animals tied together (a dog and a person) pull each other by weight: the light one gives way most.
+- Leads never snap. After a teleport, what's on the lead in your hand comes along beside you.
 - Minecraft's own mobs on leads in your hand get tied to the GTA thing you click, too.
 - Minecraft's boats take in GTA's people and animals who walk into them, exactly as they take in Minecraft's mobs:
   only while nobody rows them, up to two per boat (one in a chest boat). They sit in the boat wherever it goes, until
@@ -86,7 +84,8 @@ You play GTA's story as Steve, with Minecraft's items, blocks, mobs and movement
 - Spawn a cow, pig, chicken, rabbit, cat, wolf, fox, ocelot, dolphin or fish and it becomes GTA's own animal.
 - Minecraft's mobs bump into GTA's walls. A car or a flung person that hits a mob kills it.
 - Fire passes between the games: Minecraft fire burns GTA's people and cars, and GTA's fires burn Minecraft's mobs.
-- Hostile mobs hunt GTA's people, and the police shoot back.
+- Hostile mobs hunt GTA's people, and the police shoot back. They hunt you too, as in survival, even in creative:
+  zombies hit, fire burns, water drowns, falls hurt, all on GTA's health. GTA's people drown in Minecraft's water.
 - Nether and End portals turn the area around them into the Nether or the End. Walk back in to leave.
 
 **HUD**
@@ -97,6 +96,10 @@ You play GTA's story as Steve, with Minecraft's items, blocks, mobs and movement
 **Story missions stay playable**
 - In cutscenes, character switches, loading screens and mission scenes, Minecraft gets no input, so you can't hit
   anyone by accident.
+- Restarting a mission or going back to a checkpoint clears Minecraft's things (as `/clearall`), keeping the mission's
+  own cars and people.
+- GTA's slow motion (dying, Michael's and Franklin's abilities) slows Minecraft too: swings, the bow, the attack bar.
+- GTA's phone shows over Minecraft's hand and HUD, and the clicks and wheel go to the phone while it's out.
 - God mode (F9) is off by default, so the story runs by GTA's rules.
 
 ---
@@ -170,15 +173,15 @@ FORCE=1 ./gta/install.sh
 |---|---|
 | W A S D | walk (Minecraft's movement) |
 | Shift | sprint |
-| Ctrl | sneak; flying: go down |
+| C | sneak; flying: go down |
 | Space | Minecraft's jump; flying: go up. **Hold** it at a ledge too high to jump and GTA climbs it |
 | Space twice | in the air with an elytra on: glide. In a car (driver's seat, after `/fly`): the car flies with you; twice again to drive |
 | mouse | look all the way up and down (Minecraft movement) |
 | V | first person / third person (near, middle, far) |
-| left mouse | attack: break blocks, swing what you hold; hold with a pickaxe to mine GTA's world |
+| left mouse | attack: break blocks, swing what you hold |
 | right mouse | use: place blocks, pour water, shoot, throw pearls and potions, eat |
 | mouse wheel, 1-9 | hotbar |
-| Q | drop the item in hand |
+| Q | GTA's cover (Minecraft's drop is off) |
 | E or I | Minecraft's inventory (E goes to GTA when GTA asks for E) |
 | Esc | closes Minecraft's screen (doesn't open GTA's pause menu); with nothing open: GTA's pause menu |
 | hold Alt | over the inventory or chat: hides it, and you can move and look about; let go and it's back |
@@ -198,15 +201,15 @@ Type them in Minecraft's chat (T):
 
 | command | what it does |
 |---|---|
-| `/spectator` | spectator, as in Minecraft: fly through everything, unseen. Space up, Ctrl down |
+| `/spectator` | spectator, as in Minecraft: fly through everything, unseen. Space up, C down |
 | `/creative` | back to creative |
 | `/clearall` | clears all mobs, items and blocks you placed, and GTA's cars, people and fires around you. Your inventory stays |
 | `/kill @e` | kills Minecraft's mobs **and** GTA's people and animals around you (`/kill @e[type=cow]`: only cows) |
 | `/time set night` | sets GTA's clock too (`day`, `noon`, `night`, `midnight`, or a number) |
 | `/weather rain` | sets GTA's weather too (`clear`, `rain`, `thunder`) |
-| `/fly` | flying on / off (Space up, Ctrl down; a car flies with Space twice). Off: no flying at all |
+| `/fly` | flying on / off (Space up, C down; a car flies with Space twice). Off: no flying at all |
 | `/waypoint` | teleports you (and your car) to the waypoint set on GTA's map |
-| `/range 12` | your reach in blocks, for blocks, mobs and GTA's people, cars and things (default 8) |
+| `/range 12` | your reach in blocks, for blocks, mobs and GTA's people, cars and things (default 8, up to 512) |
 | `/enchant @p knockback 1000` | any level, past Minecraft's limit (an item holds 255; higher levels count in GTA) |
 | `/summon car` | GTA things: `car`, `truck`, `tank`, `plane`, `jet`, `heli`, `boat`, `bike`, `bus`, `police`, `npc`, `cop`, `soldier`, or any GTA model name (`adder`, `a_m_y_hipster_01`). Minecraft's own mobs summon as always |
 | `/gta spawn car 5` | the same as `/summon`, and more of them at once; `/gta spawn adder drive` puts you at the wheel |
@@ -228,7 +231,7 @@ Also:
   people you kill drop experience orbs.
 - Fishing rods work in GTA's sea, lakes and rivers; things thrown or shot into GTA's water splash; Impaling tridents
   hit harder in water and rain. While GTA moves you, its breath is your air bubbles.
-- In a mission's armed vehicle (a Buzzard, a tank) the mouse fires its weapons; Q takes cover when GTA asks for it.
+- In a mission's armed vehicle (a Buzzard, a tank) the mouse fires its weapons; Q always takes cover.
 - A swing hits what your crosshair is on (a person, a car, a thing), not everyone round about (the mace's falling smash
   still hits all round). Weapons knock along where you look: look up while hitting and they fly up. Lamp posts, signs,
   bins and car parts can be hit and launched too, much further with Knockback. (GTA's own map objects are never moved
@@ -304,13 +307,7 @@ pitch = −pitch. The script picks yOffset so the ground where the player stands
   them with invisible barrier blocks, raised over GTA's walls and fences so mobs bump into them. GTA's water goes as
   `gwater`: Minecraft treats it as water nobody sees (`HostWater`, via `Level.getFluidState`; Minecraft only looks
   for water in chunk sections that hold some, so `EntityFluidMixin` lets it look where GTA has water).
-- **Mining.** With a pickaxe on GTA's surface (the crosshair hit carries its material), an unseen `HostSurfaceBlock`
-  fills the cell behind it, shaped to it, and Minecraft mines that as its own block (its cracks drawn as the block's own
-  faces, by stage). Broken, it's `dug`: the script hides a door there, or marks the cell dug out (its probes look past
-  it; the shader cuts GTA's surface out there from a 64³ grid of cells round the camera) and tells Minecraft which
-  cells round it are still inside GTA's solid world (`digfill`), filled with Minecraft's blocks whose outer faces the
-  shader hides. `mc/tools/gen_dig_assets.py` writes the block's models.
-- **Minecraft movement.** GTA's player is frozen and follows Minecraft's. GTA's floors, walls (24 rays at three
+- **Minecraft movement.** GTA's player is frozen (but not while standing still on GTA's ground) and follows Minecraft's. GTA's floors, walls (24 rays at three
   heights, joined) and ceilings around the player go to Minecraft as collision boxes (`hc`). Fast moves (gliding) are
   checked against GTA's world along their whole path.
 - **Frames.** The mod copies Minecraft's world colour and depth before the hand is drawn, then the hand, HUD and
@@ -365,7 +362,7 @@ curl -sLO https://raw.githubusercontent.com/alloc8or/gta5-nativedb-data/master/n
 python3 gta/tests/check_natives.py natives.json
 
 # the GTA simulator (the script's movement, input, rig, minimap mask, arrows, character switches, leads, boats,
-# pickups and re-levelling never stopping the player, punched signs flung, /kill on people in cars, mining GTA's world,
+# pickups and re-levelling never stopping the player, punched signs flung, /kill on people in cars,
 # fire)
 python3 tests/sim/gen_hashes.py
 g++ -std=c++20 -w -Itests/sim/inc -Igta/third_party/shv "-D__declspec(x)=" -DNOMINMAX tests/sim/sim.cpp -o sim && ./sim
@@ -373,10 +370,10 @@ g++ -std=c++20 -w -Itests/sim/inc -Igta/third_party/shv "-D__declspec(x)=" -DNOM
 # Minecraft side: start the dev client (cd mc && ./gradlew runClient), then
 python3 tests/scratchpad_test_host.py   # screens, portals, melee, projectiles
 python3 tests/walktest.py               # Minecraft movement against GTA's collision, pearls, blocks on walls, water
-python3 tests/features_test.py          # animals, commands, mobs, fires, spectator, HUD health, cutscene input
+python3 tests/features_test.py          # animals, commands, mobs, fires, spectator, HUD health, cutscene input, mission restart, /range, Straight
 python3 tests/leads_test.py             # leads on GTA's things (held, tied, cut), Minecraft's mobs tied there, boat seats
 python3 tests/water_test.py             # in GTA's water: in water (swimming), and a riptide trident launches there
-python3 tests/dig_test.py               # mining GTA's wall with a pickaxe: survival time, drop, wear, filled sides, /clearall
+python3 tests/fall_test.py              # falls at GTA's speed and hurt, water landings don't, the void doesn't kill, mobs hunt you in creative
 ```
 
 The GTA side is also compile-checked with MinGW (`x86_64-w64-mingw32-g++ -fsyntax-only`), and the effect with

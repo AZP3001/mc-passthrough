@@ -6,7 +6,6 @@ import com.google.gson.JsonParser;
 import dev.rehan.passthrough.HostBridge;
 import dev.rehan.passthrough.HostCollision;
 import dev.rehan.passthrough.HostWater;
-import dev.rehan.passthrough.HostDig;
 import dev.rehan.passthrough.Leads;
 import dev.rehan.passthrough.MobWar;
 import dev.rehan.passthrough.Nether;
@@ -69,13 +68,13 @@ public final class HostLink extends WebSocketServer {
 		}
 
 		Passthrough.LOG.info("host connected from {}", conn.getRemoteSocketAddress());
-		HostDig.reset(); // (a host starting afresh knows of nothing mined)
 		conn.send(String.format(Locale.ROOT, "{\"t\":\"hello\",\"v\":1,\"shm\":\"%s\",\"pid\":%d}", FrameExporter.NAME.replace("\\", "\\\\"), ProcessHandle.current().pid()));
 	}
 
 	@Override
 	public void onClose(final WebSocket conn, final int code, final String reason, final boolean remote) {
 		Passthrough.LOG.info("host disconnected ({} {})", code, reason);
+		WorldBridge.timeScale(1.0F); // (left in the host's slow motion: Minecraft's own speed again)
 	}
 
 	@Override
@@ -91,6 +90,8 @@ public final class HostLink extends WebSocketServer {
 					HostWater.clear();
 				}
 				case "gwater" -> HostWater.update(ints(m.getAsJsonArray("c")));
+				case "restart" -> HostBridge.missionRestart();
+				case "timescale" -> WorldBridge.timeScale(m.get("s").getAsFloat());
 				case "hitmark" -> HitMarker.hit(m.has("kill") && m.get("kill").getAsBoolean(), m.has("shot") && m.get("shot").getAsBoolean());
 				case "xp" -> {
 					JsonArray at = m.getAsJsonArray("pos");
@@ -186,7 +187,6 @@ public final class HostLink extends WebSocketServer {
 					Leads.event(m.get("id").getAsInt(), m.get("e").getAsString(), at.get(0).getAsDouble(), at.get(1).getAsDouble(), at.get(2).getAsDouble());
 				}
 				case "boatgrab" -> Leads.grab(m.get("ped").getAsInt(), m.get("boat").getAsInt());
-				case "digfill" -> HostDig.fill(ints(m.getAsJsonArray("c")));
 				case "boatleave" -> Leads.leave(m.get("ped").getAsInt());
 				case "hostshot" -> {
 					JsonArray at = m.getAsJsonArray("pos"), dir = m.getAsJsonArray("dir");

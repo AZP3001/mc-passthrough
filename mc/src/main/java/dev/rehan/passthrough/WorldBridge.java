@@ -79,6 +79,19 @@ public final class WorldBridge {
 		return server;
 	}
 
+	/** The host's time scale (its slow motion: dying, Michael's or Franklin's ability): Minecraft ticks that much slower. Any thread. */
+	public static void timeScale(final float scale) {
+		MinecraftServer s = server;
+		if (s != null) {
+			float rate = Math.max(1.0F, Math.min(20.0F, 20.0F * scale));
+			s.execute(() -> {
+				if (Math.abs(s.tickRateManager().tickrate() - rate) > 0.05F) {
+					s.tickRateManager().setTickRate(rate);
+				}
+			});
+		}
+	}
+
 	/** Columns of solid ground from the host: {x, z, yBottom, yTop, ...} in block coordinates (inclusive). Only air is replaced. */
 	public static void solid(final int[] columns) {
 		MinecraftServer s = server;
@@ -94,7 +107,7 @@ public final class WorldBridge {
 			for (int i = 0; i + 3 < columns.length; i += 4) {
 				for (int y = columns[i + 2]; y <= columns[i + 3]; y++) {
 					pos.set(columns[i], y, columns[i + 1]);
-					if (level.isInWorldBounds(pos) && level.getBlockState(pos).isAir() && !HostDig.keepOut(pos)) {
+					if (level.isInWorldBounds(pos) && level.getBlockState(pos).isAir()) {
 						level.setBlock(pos, barrier, Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
 						barriers.add(pos.immutable());
 					}
@@ -190,9 +203,8 @@ public final class WorldBridge {
 	private static boolean solidForHost(final ServerLevel level, final BlockPos pos, final BlockState state) {
 		// the Nether's and the End's ground is the host's own ground turned: nothing to collide with that isn't there
 		// already; and an end portal's frame is stepped over, not climbed (the host's player walks into the portal)
-		// (nor a block filling round a hole mined in the host's world: the host's own wall or ground is there)
 		return !state.isAir() && !state.is(Blocks.BARRIER) && !state.is(Blocks.END_PORTAL_FRAME) && !state.getCollisionShape(level, pos).isEmpty()
-			&& !Nether.isGround(pos) && !TheEnd.isGround(pos) && !HostDig.isFill(pos);
+			&& !Nether.isGround(pos) && !TheEnd.isGround(pos);
 	}
 
 	/** Arrows the host already hit something with (they stay where they hit and aren't reported again). */
@@ -248,6 +260,7 @@ public final class WorldBridge {
 
 	/** Every server tick: block changes, and projectiles in flight for the host to trace through its own world. */
 	static void tick(final MinecraftServer s) {
+		StraightArrows.tick(s);
 		flush(s);
 		flushWater(s.overworld());
 		if (Passthrough.active && s.getTickCount() % 20 == 0) {
@@ -259,7 +272,6 @@ public final class WorldBridge {
 
 		MobWar.tick(s);
 		Leads.tick(s);
-		HostDig.tick(s);
 		Nether.tick(s);
 		TheEnd.tick(s);
 		HostBridge.tick(s);
@@ -465,7 +477,6 @@ public final class WorldBridge {
 		}
 
 		Nether.onBlockChanged(pos, state);
-		HostDig.onBlockChanged(pos, state);
 		if (!placingGround) {
 			changes.put(pos.immutable(), solidForHost(level, pos, state));
 		}

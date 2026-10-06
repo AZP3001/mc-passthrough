@@ -82,7 +82,7 @@ public class Passthrough implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
-		HostDig.register();
+		LegacyBlocks.register();
 		ServerLifecycleEvents.SERVER_STARTED.register(WorldBridge::attach);
 		ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
 			// before the world is saved: the Nether goes back and the fight's mobs go, so none of it is kept
@@ -90,7 +90,6 @@ public class Passthrough implements ModInitializer {
 			TheEnd.detach(server);
 			MobWar.detach(server);
 			Leads.detach(server);
-			HostDig.clearAll(server.overworld());
 			WorldBridge.removeGround(server); // the host's ground isn't saved with the world either
 			WorldBridge.detach();
 		});
@@ -160,7 +159,7 @@ public class Passthrough implements ModInitializer {
 					return 1;
 				})));
 			// the reach (blocks, and the host's people and cars): /range 12
-			dispatcher.register(Commands.literal("range").then(Commands.argument("blocks", DoubleArgumentType.doubleArg(1.0, 64.0))
+			dispatcher.register(Commands.literal("range").then(Commands.argument("blocks", DoubleArgumentType.doubleArg(1.0, 512.0))
 				.executes(context -> {
 					double r = DoubleArgumentType.getDouble(context, "blocks");
 					HostBridge.reach = r;
@@ -285,6 +284,7 @@ public class Passthrough implements ModInitializer {
 		ServerEntityEvents.ENTITY_LOAD.register(MobWar::onEntityLoad);
 		ServerEntityEvents.ENTITY_LOAD.register(HostBridge::onEntityLoad);
 		ServerEntityEvents.ENTITY_LOAD.register(Leads::onEntityLoad);
+		ServerEntityEvents.ENTITY_LOAD.register(StraightArrows::onEntityLoad);
 		ServerTickEvents.END_SERVER_TICK.register(WorldBridge::tick);
 		LOG.info("passthrough loaded");
 	}

@@ -8,7 +8,10 @@ import org.objectweb.asm.Opcodes;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import net.minecraft.world.damagesource.DamageSource;
 
 /**
  * While the host moves the player, neither side collides it with blocks: the host's ground arrives as barriers the
@@ -37,5 +40,28 @@ abstract class PlayerMixin {
 		if (Passthrough.active && !self.level().isClientSide()) {
 			ci.cancel();
 		}
+	}
+
+	@Unique
+	private boolean passthrough$mayflyWas;
+
+	/**
+	 * A fall hurts though the player may fly (/fly or creative gives it that): Minecraft spares anyone who may fly,
+	 * so a fall never hurt here, and a parachute or a water bucket was never needed. Flying itself never falls.
+	 */
+	@Inject(method = "causeFallDamage", at = @At("HEAD"))
+	private void passthrough$fallHurts(final double fallDistance, final float damageModifier, final DamageSource source,
+		final CallbackInfoReturnable<Boolean> cir) {
+		Player self = (Player) (Object) this;
+		this.passthrough$mayflyWas = self.getAbilities().mayfly;
+		if (Passthrough.active && !self.isSpectator() && !self.getAbilities().flying) {
+			self.getAbilities().mayfly = false;
+		}
+	}
+
+	@Inject(method = "causeFallDamage", at = @At("RETURN"))
+	private void passthrough$fallHurtsAfter(final double fallDistance, final float damageModifier, final DamageSource source,
+		final CallbackInfoReturnable<Boolean> cir) {
+		((Player) (Object) this).getAbilities().mayfly = this.passthrough$mayflyWas;
 	}
 }

@@ -182,6 +182,11 @@ final class ClientInput {
 						code = 'e';
 					}
 
+					// Q is the host's cover key: it never drops what's in the inventory either
+					if (key == InputConstants.KEY_Q && screen instanceof net.minecraft.client.gui.screens.inventory.AbstractContainerScreen<?>) {
+						return;
+					}
+
 					minecraft.keyboardHandler.keyPress(window.handle(), m.get("a").getAsInt(), new KeyEvent(key, code, m.get("m").getAsInt()));
 				}
 			}

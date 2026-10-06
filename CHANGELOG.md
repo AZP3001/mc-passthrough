@@ -1,5 +1,66 @@
 # Changelog
 
+## Round 2: falls, mobs, leads, missions (2026-10-06)
+
+Tested in the GTA simulator (`tests/sim`, all checks) and in Minecraft (`tests/*_test.py`, `walktest.py`,
+`scratchpad_test_host.py`, all passing; new `tests/fall_test.py`). Not yet tried in real GTA.
+
+### Removed
+
+- **Mining GTA's world** with a pickaxe is gone (GTA side, shader and Minecraft side), with the pits cars and people
+  fell into. The five blocks it used stay registered, unseen and inert, so a world that had them still loads without
+  Fabric's "missing content" screen.
+
+### Fixed
+
+| Fixed | What was wrong | Now |
+|---|---|---|
+| No fall damage | The mod lets you fly (`/fly`), and Minecraft spares anyone allowed to fly. A fall that would have killed Minecraft's player also killed it in Minecraft only, and the report to GTA skipped dead players | Falls hurt GTA's health. Minecraft's player is held at one heart and the full damage goes to GTA, which decides when you die. The same fix makes fire, drowning and mobs hurt you |
+| Mobs ignored you | The mod's world is creative, so Minecraft's mobs never targeted you, and fire, water and falls never hurt | While GTA is linked, creative plays like survival for danger: mobs hunt and hit you, fire burns, water drowns, falls hurt. Creative's building and inventory stay. Hunger stays full (the bar shows GTA's stamina) |
+| Riptide fell through floors | At a riptide's (or a long fall's) speed, GTA's floor reached Minecraft too late | The whole path fallen each frame is checked for a floor, wherever you'd stood before |
+| Died in the void, no way back up | Minecraft's void killed you, and in Minecraft movement GTA never put you back up | The void never kills you. Fallen out of GTA's world (nothing under you, GTA's ground overhead) you're put back on its ground, or where you last stood |
+| Bow drawn but wouldn't shoot | In a mission, a drawn bow holds GTA's aim down itself, so the right button's release never showed | The mouse buttons are read as they really are |
+| Knockback killed instead of throwing | The blow killed first, and the push never moved a dead body | Pushed first, hurt a moment later: they fly, even from a killing blow. Punch and tridents too |
+| Punching signs did nothing | The copy of a sign made in place of the map's had no physics yet the frame it was pushed, and a not-yet-loaded model lost the hit | The push is given again until it moves, and waits for the model. Thin poles are found with a fatter line. Punch arrows fling signs, bins and lamp posts too |
+| Things duplicated when hit | A sign hit again before GTA hid the original got a second copy | One copy per thing |
+| Leads snapped, people circled you | Leads snapped past 11 blocks; a pull kept the sideways speed, so the pulled spun round the puller, and people were lifted (floating) | Leads never snap (after a teleport, what you lead comes along). Sideways speed is damped and people are dragged along the ground on their back |
+| Mission triggers in Minecraft movement | GTA's player was always frozen | Not frozen while you stand still on GTA's ground |
+| Steve dark in cutscenes | Steve took the light of the room round him, often dark | In cutscenes Steve is lit at least as GTA lights its characters (`SteveMinLight`) |
+| Minecraft's water hid the street | Water (70% covered) counted as solid | Water, glass and ice blend with GTA again (`SolidCoverage`, 0.85) |
+| Jump in mid-air | Holding Space by a wall in a fall climbed it, from where you'd last stood | Climbing only from the ground (or the jump just taken from it) |
+| Too much health | A totem's hidden 2000 health, left on by a save or a reload, never came off | Back to the story characters' 200 |
+
+### Added
+
+| Feature | Details |
+|---|---|
+| Straight | A bow-only enchantment (one level): its arrows fly dead straight, no gravity, and are gone after 500 blocks |
+| Bow intimidation | Cops, soldiers and anyone fighting only look at you. Pointed at a car, only that car's people get out with their hands up. Crossbows too |
+| GTA's fall | Falls speed up as GTA's do (9.8 m/s per second, up to about 52 m/s). A long fall with a parachute hands over to GTA's skydive (F opens it) |
+| Slow motion | GTA's slow motion (dying, Michael's and Franklin's abilities) slows Minecraft too |
+| Mission restart | Restarting a mission or going back to a checkpoint clears Minecraft's things; the mission's own cars and people stay |
+| Doors | Unlocked doors open as you walk through them in Minecraft movement (locked ones stay walls) |
+| Q | Always GTA's cover; Minecraft's drop is off, in the inventory too |
+| C | Sneak (and fly down) |
+| GTA's phone | Minecraft's hand and HUD make way for it, and the clicks and wheel go to it |
+| Drowning | GTA's people with their heads in Minecraft's water drown (15 s of breath) |
+| Leads | Two of GTA's people or animals tied together (a dog and a person) pull each other by weight. Minecraft's own leads never snap either |
+| `/range` | Up to 512 blocks |
+
+### GTA natives newly used
+
+| Native | Hash | What for |
+|---|---|---|
+| `TASK_SKY_DIVE` | `0x601736CFE536B0A0` | A long fall with a parachute |
+| `IS_PED_RUNNING_MOBILE_PHONE_TASK` | `0x2AFE52F782F25775` | GTA's phone out |
+| `IS_SPECIAL_ABILITY_ACTIVE` | `0x3E5F7FC85D854E15` | Slow motion |
+| `GET_STATE_OF_CLOSEST_DOOR_OF_TYPE` | `0xEDC1A5B84AEF33FF` | Doors, locked or not |
+| `START_SHAPE_TEST_CAPSULE` | `0x28579D1B8F8AAC80` | Thin things by the crosshair |
+| `IS_PED_IN_COMBAT`, `IS_PED_ARMED`, `TASK_LOOK_AT_ENTITY`, `TASK_TURN_PED_TO_FACE_ENTITY` | | Bow intimidation |
+
+Every native call is checked against alloc8or's native database (`gta/tests/check_natives.py`: 356 calls, 0
+problems).
+
 ## Hotfix (2026-10-06)
 
 - The player character is hidden for real again (`SET_ENTITY_VISIBLE(false)`, plus `SET_ENTITY_LOCALLY_INVISIBLE`).

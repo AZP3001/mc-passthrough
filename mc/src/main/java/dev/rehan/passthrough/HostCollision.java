@@ -70,10 +70,6 @@ public final class HostCollision {
 
 	/** The host's collision inside block cell `pos` (cell coordinates 0..1), or empty. */
 	public static VoxelShape at(final BlockPos pos) {
-		if (HostDig.isDug(pos)) {
-			return Shapes.empty(); // (mined out of the host's world: nothing of it is there)
-		}
-
 		VoxelShape shape = cells.get(pos.asLong());
 		return shape == null ? Shapes.empty() : shape;
 	}

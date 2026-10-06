@@ -8,13 +8,9 @@
 texture MCWorldTex : MCWORLD;
 texture MCDepthTex : MCDEPTH;
 texture MCOverlayTex : MCOVERLAY;
-// The cells mined out of GTA's world round the camera (64 x 64 x 64 as 64 slices of 64 x 64: slice y at column
-// (y % 8) * 64, row (y / 8) * 64): 1 dug out, about 0.5 one of the blocks Minecraft fills round a hole with.
-texture MCDigTex : MCDIG;
 sampler sWorld { Texture = MCWorldTex; AddressU = CLAMP; AddressV = CLAMP; };
 sampler sDepth { Texture = MCDepthTex; MinFilter = POINT; MagFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
 sampler sOverlay { Texture = MCOverlayTex; AddressU = CLAMP; AddressV = CLAMP; };
-sampler sDig { Texture = MCDigTex; MinFilter = POINT; MagFilter = POINT; MipFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
 
 // x = near, y = far, z = flags (1: [0,1] depth, 2: rows bottom-up, 4: reversed Z). Set by the add-on.
 uniform float3 McPlanes = float3(0.05, 2048.0, 7.0);
@@ -40,6 +36,10 @@ uniform float MinLight < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step =
 	ui_tooltip = "How dark Minecraft may get in GTA's darkest places (Minecraft renders in full daylight)."; > = 0.10;
 uniform float MaxLight < ui_type = "drag"; ui_min = 0.5; ui_max = 2.0; ui_step = 0.01; ui_label = "Brightest light";
 	ui_tooltip = "How much brighter than its own colours Minecraft may get in GTA's brightest places. Over 1 it glows."; > = 1.0;
+// Set by the add-on in cutscenes (1): Steve is lit at least SteveMinLight then.
+uniform float SteveLit = 0.0;
+uniform float SteveMinLight < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.01; ui_label = "Steve's darkest light";
+	ui_tooltip = "In cutscenes Steve is lit at least this much, as GTA lights its characters (the room round him was dark, and he was black)."; > = 0.5;
 uniform float LightTint < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.01; ui_label = "Light colour"; > = 0.2;
 uniform float LightBlur < ui_type = "drag"; ui_min = 1.0; ui_max = 6.0; ui_step = 0.1; ui_label = "Light blur (mip)"; > = 3.5;
 uniform float McGamma < ui_type = "drag"; ui_min = 0.5; ui_max = 2.0; ui_step = 0.01; ui_label = "Minecraft gamma";
@@ -47,8 +47,9 @@ uniform float McGamma < ui_type = "drag"; ui_min = 0.5; ui_max = 2.0; ui_step = 
 uniform float Saturation < ui_type = "drag"; ui_min = 0.0; ui_max = 1.5; ui_step = 0.01; ui_label = "Minecraft saturation"; > = 0.88;
 uniform float SaturationMatch < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.01; ui_label = "Match GTA saturation";
 	ui_tooltip = "Make Minecraft as colourful as GTA's world around it: greyer on a grey street, as vivid in a park."; > = 0.25;
-uniform float SolidAlpha < ui_type = "drag"; ui_min = 0.3; ui_max = 1.0; ui_step = 0.01; ui_label = "Solid from coverage";
-	ui_tooltip = "Minecraft pixels at least this covered are drawn fully solid (only water, glass, ice and edges blend with GTA)."; > = 0.45;
+// (renamed from SolidAlpha, 0.45: Minecraft's water, 0.7 covered, counted as solid then, so it hid GTA's street under it)
+uniform float SolidCoverage < ui_type = "drag"; ui_min = 0.3; ui_max = 1.0; ui_step = 0.01; ui_label = "Solid from coverage";
+	ui_tooltip = "Minecraft pixels at least this covered are drawn fully solid (water, glass, ice and edges blend with GTA)."; > = 0.85;
 uniform float GradeMatch < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.01; ui_label = "Match GTA colour grade";
 	ui_tooltip = "Give Minecraft the colour of GTA's whole picture (a red Nether night, an orange sunset), as GTA's own grading does to its world."; > = 0.3;
 uniform float HazeStart < ui_type = "drag"; ui_min = 0.0; ui_max = 200.0; ui_step = 1.0; ui_label = "Haze start (m)"; > = 90.0;
@@ -99,17 +100,6 @@ uniform float4 SteveMc = float4(0.0, 0.0, 0.0, 0.0);
 uniform float4 SteveUp = float4(0.0, 1.0, 0.0, 0.0);
 uniform float SteveBias < ui_type = "drag"; ui_min = 0.0; ui_max = 1.0; ui_step = 0.01; ui_label = "Steve's depth allowance (m)";
 	ui_tooltip = "How far behind GTA's surfaces Steve may still show (he's wider than GTA's character)."; > = 0.2;
-// Set by the add-on while cells are mined out of GTA's world: GTA's camera and Minecraft's (position from the cells'
-// corner, and the rows of the camera-to-world rotation).
-uniform float DigOn = 0.0;
-uniform float3 DigHostPos = float3(0.0, 0.0, 0.0);
-uniform float3 DigHostRow0 = float3(1.0, 0.0, 0.0);
-uniform float3 DigHostRow1 = float3(0.0, 1.0, 0.0);
-uniform float3 DigHostRow2 = float3(0.0, 0.0, 1.0);
-uniform float3 DigMcPos = float3(0.0, 0.0, 0.0);
-uniform float3 DigMcRow0 = float3(1.0, 0.0, 0.0);
-uniform float3 DigMcRow1 = float3(0.0, 1.0, 0.0);
-uniform float3 DigMcRow2 = float3(0.0, 0.0, 1.0);
 uniform float MarchThickness < ui_type = "drag"; ui_min = 0.05; ui_max = 3.0; ui_step = 0.05; ui_label = "Re-projection thickness (m)";
 	ui_tooltip = "How deep Minecraft's surfaces count when re-projecting: smaller stops thin things smearing on camera moves."; > = 0.6;
 
@@ -188,7 +178,7 @@ float4 surface_light(float2 uv, float mip, out float sat)
 /// saturation to GTA's world around it, light it with GTA's surfaces around it (never brighter than its own colours:
 /// that glowed), give it GTA's colour grade (the whole picture's colour) and, far away, GTA's haze, toward GTA's overall
 /// colour (never toward what's behind it: that looked see-through).
-float3 relight(float3 c, float2 uv, float zm)
+float3 relight(float3 c, float2 uv, float zm, float minLight)
 {
 	float sat;
 	const float3 L = surface_light(uv, LightBlur, sat).rgb;
@@ -196,7 +186,7 @@ float3 relight(float3 c, float2 uv, float zm)
 	c = pow(max(c, 0.0), McGamma);
 	const float satMatch = lerp(1.0, clamp(sat / 0.3, 0.55, 1.15), SaturationMatch);
 	c = max(lerp(luma(c).xxx, c, Saturation * satMatch), 0.0);
-	const float gain = clamp(lum / LightReference, MinLight, MaxLight);
+	const float gain = clamp(lum / LightReference, max(MinLight, minLight), MaxLight);
 	const float3 tint = clamp(lerp(1.0, L / max(lum, 1e-3), LightTint), 0.7, 1.3);
 	c = lerp(c, c * gain * tint, LightMatch);
 	// the picture's grade, gentled (GTA's own grade keeps some colour in everything) and kept off lights (bright
@@ -206,45 +196,6 @@ float3 relight(float3 c, float2 uv, float zm)
 	c = lerp(c, c * grade, GradeMatch * (1.0 - saturate((max(c.r, max(c.g, c.b)) - 0.45) * 2.5)));
 	const float h = saturate((1.0 - exp(-max(zm - HazeStart, 0.0) / HazeDistance)) * HazeStrength);
 	return lerp(c, M, h);
-}
-
-/// The cell at p (from the dug cells' corner): 1 dug out, about 0.5 a block filling round a hole, 0 neither.
-float dig_cell(float3 p)
-{
-	const float3 c = floor(p);
-	if (any(c < 0.0) || any(c > 63.0))
-		return 0.0;
-	const float row = floor(c.y / 8.0);
-	const float2 texel = float2((c.y - row * 8.0) * 64.0 + c.x, row * 64.0 + c.z);
-	return tex2Dlod(sDig, float4((texel + 0.5) / 512.0, 0, 0)).r;
-}
-
-/// Whether a GTA surface point (GTA's camera space) is in a cell dug out (or on its edge, just in front of it along the
-/// view: the street over a hole dug under it).
-bool dug_host(float3 pc)
-{
-	const float3 p = DigHostPos + float3(dot(DigHostRow0, pc), dot(DigHostRow1, pc), dot(DigHostRow2, pc));
-	const float3 d = normalize(float3(dot(DigHostRow0, pc), dot(DigHostRow1, pc), dot(DigHostRow2, pc)));
-	// (a little into the surface along the view too: GTA's depth isn't exact, and a surface lying on a cell's edge
-	// was found just in front of it now and then, so patches of a mined wall stayed)
-	return dig_cell(p) > 0.75 || dig_cell(p + d * 0.06) > 0.75 || dig_cell(p + d * 0.1) > 0.75;
-}
-
-/// Whether a point of Minecraft's picture (its camera's space) is on the outside of a block filling round a hole (a face
-/// not on the hole: GTA's own wall or street is there, and the block must not show through it or stick out of it).
-bool filler_outside(float3 qm)
-{
-	const float3 p = DigMcPos + float3(dot(DigMcRow0, qm), dot(DigMcRow1, qm), dot(DigMcRow2, qm));
-	float fill = 0.0, dug = 0.0;
-	[unroll] for (int a = 0; a < 3; ++a)
-	{
-		float3 o = 0.0;
-		o[a] = 0.03;
-		const float v0 = dig_cell(p + o), v1 = dig_cell(p - o);
-		fill = max(fill, max(v0 > 0.25 && v0 < 0.75 ? 1.0 : 0.0, v1 > 0.25 && v1 < 0.75 ? 1.0 : 0.0));
-		dug = max(dug, max(v0 > 0.75 ? 1.0 : 0.0, v1 > 0.75 ? 1.0 : 0.0));
-	}
-	return fill > 0.5 && dug < 0.5;
 }
 
 float3 bands(float z)
@@ -278,7 +229,7 @@ bool mc_sample(float3 p, float3 T, out float2 n, out float behind)
 bool march(float3 ray, float3 T, float zFar, out float2 muv, out float zm, out float3 qm)
 {
 	const float2 mcScale = float2(WarpTan.y * WarpTan.z, WarpTan.y);
-	const float zNear = 0.05; // (in a mined tunnel its walls are a hand's breadth off)
+	const float zNear = 0.05; // (in a tunnel of blocks its walls are a hand's breadth off)
 	muv = 0.0;
 	zm = 1e9;
 	qm = 0.0;
@@ -374,12 +325,8 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 	const float3 ray = float3((uv.x * 2.0 - 1.0) * WarpTan.x * BUFFER_WIDTH * BUFFER_RCP_HEIGHT, (1.0 - uv.y * 2.0) * WarpTan.x, -1.0);
 	// how far behind GTA's surface Minecraft may still show: more where that surface is seen at a grazing angle
 	const float allow = min(DepthBias + SlopeBias * abs(ddy(zhSeen)), max(MaxBias, DepthBias));
-	// GTA's wall, street or ground mined out here: it isn't there (whatever Minecraft has behind it shows: the hole's sides)
-	const bool mined = DigOn > 0.5 && zhSeen < 2000.0 && dug_host(ray * zhSeen);
-	const float zh = mined ? 1e5 : zhSeen;
-	// what's behind a mined surface where Minecraft has nothing there either (a wall mined through into GTA's room,
-	// which GTA never drew): a dark hole, not GTA's wall still standing
-	const float3 back = mined ? float3(0.025, 0.025, 0.03) : host;
+	const float zh = zhSeen;
+	const float3 back = host;
 	float zm = 1e9;
 	float steveH = -1.0; // how high on Steve this pixel is (-1: not Steve)
 	if (Reproject)
@@ -435,16 +382,10 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 				}
 			}
 		}
-		// the outside of a block filling round a hole: GTA's surface shows there, not the block
-		if (inside && DigOn > 0.5 && filler_outside(qm))
-		{
-			inside = false;
-			zm = 1e9;
-		}
 	}
 	float4 world = inside ? tex2D(sWorld, muv) : 0.0;
 	// Minecraft's blocks and mobs are solid: only its own see-through things (water, glass, ice) and the edges blend
-	if (world.a >= SolidAlpha)
+	if (world.a >= SolidCoverage)
 		world = float4(world.rgb / world.a, 1.0);
 	if (!Reproject)
 		zm = mc_linear(tex2D(sDepth, muv).r);
@@ -478,7 +419,7 @@ void PS_Composite(float4 pos : SV_Position, float2 uv : TEXCOORD, out float4 out
 	const float cover = world.a * visible;
 	// (relit as straight colour, then put back over GTA's by its coverage)
 	const float3 albedo = world.a > 1e-3 ? world.rgb / world.a : 0.0;
-	const float3 lit = relight(albedo, uv, zm);
+	const float3 lit = relight(albedo, uv, zm, steve && SteveLit > 0.5 ? SteveMinLight : 0.0);
 	outColor = float4((glass ? lerp(lit, host, 0.2) : lit) * cover + back * (1.0 - cover), 1.0);
 	outInfo = float4(cover, cover > 0.0 ? zm : 0.0, zh, 0.0);
 }

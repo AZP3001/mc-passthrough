@@ -62,6 +62,11 @@ namespace natives
 	{
 		return invoke<int>(0x377906D8A31E5586, x1, y1, z1, x2, y2, z2, flags, ignore, options);
 	}
+	// a fat line (radius): thin things (a sign's pole, a lamp post) a line misses
+	inline int StartShapeTestCapsule(float x1, float y1, float z1, float x2, float y2, float z2, float radius, int flags, Entity ignore, int options = 7)
+	{
+		return invoke<int>(0x28579D1B8F8AAC80, x1, y1, z1, x2, y2, z2, radius, flags, ignore, options);
+	}
 	inline int GetShapeTestResult(int handle, BOOL *hit, Vector3 *end, Vector3 *normal, Entity *entity)
 	{
 		return invoke<int>(0x3D87450E15D98694, handle, hit, end, normal, entity);
@@ -177,6 +182,11 @@ namespace natives
 	inline void ApplyForceToEntity(Entity e, float x, float y, float z)
 	{
 		invoke<Void>(0xC5F68BE9613E2D18, e, 1, x, y, z, 0.0f, 0.0f, 0.0f, 0, FALSE, TRUE, TRUE, FALSE, TRUE);
+	}
+	// a push at an offset from the entity's middle (world axes): it tips the entity as well
+	inline void ApplyForceToEntityAt(Entity e, float x, float y, float z, float ox, float oy, float oz)
+	{
+		invoke<Void>(0xC5F68BE9613E2D18, e, 1, x, y, z, ox, oy, oz, 0, FALSE, TRUE, TRUE, FALSE, TRUE);
 	}
 	inline BOOL IsPedDeadOrDying(Ped p) { return invoke<BOOL>(0x3317DEDB88C95038, p, TRUE); }
 	// Mobs vs police (hashes and argument counts checked against alloc8or's nativedb for 3889).
@@ -303,6 +313,14 @@ namespace natives
 	inline BOOL IsHudHidden() { return invoke<BOOL>(0xA86478C6958735C5); }
 	inline Hash GetSelectedPedWeapon(Ped p) { return invoke<Hash>(0x0A6DB4965674D243, p); }
 	inline BOOL HasPedGotWeapon(Ped p, Hash w) { return invoke<BOOL>(0x8DECB02F88F428BC, p, w, FALSE); }
+	inline void TaskSkyDive(Ped p, BOOL instant) { invoke<Void>(0x601736CFE536B0A0, p, instant); }
+	inline BOOL IsPedRunningMobilePhoneTask(Ped p) { return invoke<BOOL>(0x2AFE52F782F25775, p); }
+	// a door of this model nearest (x, y, z): locked or not, and how far open (left alone where there's no door)
+	inline void GetStateOfClosestDoorOfType(Hash model, float x, float y, float z, BOOL *locked, float *heading)
+	{
+		invoke<Void>(0xEDC1A5B84AEF33FF, model, x, y, z, locked, heading);
+	}
+	inline BOOL IsSpecialAbilityActive(Player p) { return invoke<BOOL>(0x3E5F7FC85D854E15, p, 0); }
 	inline BOOL GetMissionFlag() { return invoke<BOOL>(0xA33CDCCDA663159E); }
 	// Story-mode stability and crossovers (vehicle weapons, breath, splashes, kills).
 	inline BOOL DoesVehicleHaveWeapons(Vehicle v) { return invoke<BOOL>(0x25ECB9F8017D98E0, v); }
@@ -311,6 +329,12 @@ namespace natives
 	inline BOOL IsPedInCover(Ped p) { return invoke<BOOL>(0x60DFD0691A170B88, p, FALSE); }
 	inline int GetRenderingCam() { return invoke<int>(0x5234F9F10919EABA); }
 	inline BOOL IsEntityInWater(Entity e) { return invoke<BOOL>(0xCFB0A0D8EDD145A3, e); }
+	inline int GetVehicleMaxNumberOfPassengers(Vehicle v) { return invoke<int>(0xA7C4F2C6E744A550, v); }
+	// Aiming a bow at GTA's people: who surrenders, who only looks back.
+	inline BOOL IsPedInCombat(Ped p, Ped target) { return invoke<BOOL>(0x4859F1FC66A6278E, p, target); }
+	inline BOOL IsPedArmed(Ped p, int flags) { return invoke<BOOL>(0x475768A975D5AD17, p, flags); }
+	inline void TaskLookAtEntity(Ped p, Entity e, int ms) { invoke<Void>(0x69F4BE8C8CC4796C, p, e, ms, 2048, 3); }
+	inline void TaskTurnPedToFaceEntity(Ped p, Entity e, int ms) { invoke<Void>(0x5AD23D40115353AC, p, e, ms); }
 	inline BOOL SetControlValueNextFrame(int pad, int control, float value) { return invoke<BOOL>(0xE8A25867FBA3B05E, pad, control, value); }
 	inline Hash GetBestPedWeapon(Ped p) { return invoke<Hash>(0x8483E98E8B888AE2, p, FALSE); }
 	inline BOOL IsEntityDead(Entity e) { return invoke<BOOL>(0x5F9532F3B5CC2551, e, FALSE); }

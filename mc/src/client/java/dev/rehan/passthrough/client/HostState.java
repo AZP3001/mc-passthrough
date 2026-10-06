@@ -104,6 +104,7 @@ public final class HostState {
 		lastHealth = pose.health();
 		Passthrough.hostRain = m.has("rain") && m.get("rain").getAsFloat() > 0.05F; // (a drizzle, or a puddle underfoot)
 		Passthrough.hostAir = m.has("air") ? m.get("air").getAsFloat() : -1.0F;
+		phone = m.has("ph") && m.get("ph").getAsBoolean();
 		latest = pose;
 		Passthrough.hostHit = pose.hostHit();
 		Passthrough.hostHealth = pose.health() < 0 ? -1.0F : Math.min(20.0F, 20.0F * pose.health() / pose.healthMax());
@@ -124,6 +125,9 @@ public final class HostState {
 
 		return out;
 	}
+
+	/** The host's phone is out: Minecraft's hand and HUD make way for it. */
+	static volatile boolean phone;
 
 	/** Whether the player may give Minecraft input now (no host, or the host says so). */
 	static boolean control() {

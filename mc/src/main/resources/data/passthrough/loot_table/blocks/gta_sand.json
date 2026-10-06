@@ -1,1 +1,0 @@
-{"type":"minecraft:block","pools":[{"rolls":1,"entries":[{"type":"minecraft:item","name":"minecraft:sand","condition":{"type":"minecraft:survives_explosion"}}]}],"random_sequence":"passthrough:blocks/gta_sand"}

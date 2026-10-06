@@ -180,6 +180,34 @@ async def main():
         note("OK:" if ok else "FAIL:", "/clearall leaves no mobs")
         if not ok:
             fails.append("clearall mobs")
+
+        # a mission restarted (the host says): Minecraft's things cleared, the host's own cars and people kept
+        await ws.send(json.dumps({"t": "cmd", "c": "setblock 2 64 -3 minecraft:stone"}))
+        await asyncio.sleep(0.5)
+        inbox.clear()
+        await ws.send(json.dumps({"t": "restart"}))
+        await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "clearall" and j.get("soft") is True, 5,
+                     "a mission restart clears Minecraft's things (softly: the host's own stay)")
+
+        # /range past Minecraft's 64
+        inbox.clear()
+        await ws.send(json.dumps({"t": "cmd", "c": "range 200", "chat": True}))
+        await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "range" and abs(j.get("r", 0) - 200) < 0.01, 5,
+                     "/range 200 is taken (over Minecraft's 64)")
+        await ws.send(json.dumps({"t": "cmd", "c": "range 8", "chat": True}))
+
+        # Straight: a bow's arrow flies without gravity
+        await ws.send(json.dumps({"t": "cmd", "c": "kill @e[type=arrow]"}))
+        await ws.send(json.dumps({"t": "cmd", "c": 'item replace entity @a weapon.mainhand with minecraft:bow[enchantments={"passthrough:straight":1}]'}))
+        await asyncio.sleep(0.5)
+        await ws.send(json.dumps({"t": "key", "k": "use", "down": True}))
+        await asyncio.sleep(1.2)
+        await ws.send(json.dumps({"t": "key", "k": "use", "down": False}))
+        await asyncio.sleep(0.6)
+        inbox.clear()
+        await ws.send(json.dumps({"t": "cmd", "c": "execute if entity @e[type=arrow,nbt={NoGravity:1b}] run summon minecraft:pig 5 64 5"}))
+        await expect(inbox, lambda j: j.get("t") == "animal" and j.get("m") == "a_c_pig", 5, "a Straight bow's arrow flies with no gravity")
+        await ws.send(json.dumps({"t": "cmd", "c": "kill @e[type=!player]"}))
         note("SUMMARY:", "ALL PASSED" if not fails else f"{len(fails)} FAILED: {fails}")
 
 

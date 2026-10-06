@@ -23,6 +23,8 @@ namespace compositor
 	void set_host_pose(float yaw, float pitch, float roll, float fov, double x, double y, double z);
 	/// How many poses back the presented picture is (1: the script reads the camera of the frame being prepared).
 	void set_pose_lag(int frames);
+	/// A cutscene plays: Steve (standing in for the player's character) is lit at least as GTA lights its characters.
+	void set_cutscene(bool on);
 	/// Minecraft's picture moves with the camera (the flight chase cam frames Steve): composite it as rendered,
 	/// without re-projecting it to GTA's newer pose, so Steve stays exactly where the camera framed him.
 	void set_camera_locked(bool locked);
@@ -38,10 +40,6 @@ namespace compositor
 	/// car_far: seated, how far the car's own body reaches from the camera (only that close does it let him show through).
 	void set_steve(float x0, float y0, float x1, float y1, float near_d, float far_d, float glass_d, double x, double y, double z,
 		float height, bool seated, float car_far = 0.0f);
-	/// The cells mined out of GTA's world round the camera, for the shader: 64 x 64 x 64 cells from Minecraft cell (ox, oy,
-	/// oz), as 512 x 512 bytes (slice y at column (y % 8) * 64, row (y / 8) * 64; 255 dug out, 128 a block filling round
-	/// it). Null: none.
-	void set_dig(int ox, int oy, int oz, const unsigned char *cells);
 	/// GTA's backbuffer size as ReShade sees it (0 until the first frame).
 	void backbuffer_size(int &width, int &height);
 }

@@ -12,6 +12,9 @@ public interface AbstractArrowAccessor {
 	@Invoker("setInGround")
 	void passthrough$setInGround(boolean inGround);
 
+	@Invoker("isInGround")
+	boolean passthrough$isInGround();
+
 	@Accessor("lastState")
 	void passthrough$setLastState(BlockState state);
 }

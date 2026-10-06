@@ -559,14 +559,8 @@ namespace compositor
 	void set_camera_locked(bool) {}
 	void set_look(float, float, float) {}
 	void set_screen_fx(float, float, float, float) {}
-	int g_digCells = -1; // set_dig: how many cells it was given (-1 never, 0 none)
-	void set_dig(int, int, int, const unsigned char *cells)
-	{
-		g_digCells = 0;
-		if (cells != nullptr)
-			for (int i = 0; i < 512 * 512; ++i)
-				g_digCells += cells[i] != 0;
-	}
+	bool g_cutscene = false;
+	void set_cutscene(bool on) { g_cutscene = on; }
 	void backbuffer_size(int &w, int &h)
 	{
 		w = 1920;
@@ -699,7 +693,12 @@ int main()
 		psets += 0;
 	}
 	check(g_walk.on, "Minecraft's movement turns on (on foot, in control)");
+	check(!g_sped.frozen, "standing still on GTA's ground: GTA's player isn't held frozen (a mission's trigger waits for it)");
+	g_pressed = {32};
+	frame();
+	g_pressed.clear();
 	check(g_sped.frozen, "GTA's player is frozen while Minecraft moves it");
+	frame();
 	check(g_walk.acked, "Minecraft's positions count once it has the host's correction");
 	check(std::fabs(g_yOffset - (-0.4f)) < 1e-4f, "ground levelled: yOffset -0.4");
 
@@ -876,15 +875,15 @@ int main()
 	g_pressed.clear();
 	check(std::find(g_calls.begin(), g_calls.end(), "ApplyForce:50") != g_calls.end(), "walking into a door pushes it");
 
-	// Shift sprints, Ctrl sneaks (and flies down)
+	// Shift sprints, C sneaks (and flies down)
 	g_pressed = {21};
 	frame();
 	g_pressed.clear();
 	check(count_out("\"in\":64") > 0, "Shift: Minecraft sprints");
-	g_pressed = {36};
+	g_pressed = {26};
 	frame();
 	g_pressed.clear();
-	check(count_out("\"in\":32") > 0, "Ctrl: Minecraft sneaks (flying: down)");
+	check(count_out("\"in\":32") > 0, "C: Minecraft sneaks (flying: down)");
 
 	// free look: the mouse looks all the way down (GTA's own camera stops well short)
 	check(g_walkCam.cam != 0, "Minecraft's free look renders while Minecraft moves the player");
@@ -964,7 +963,7 @@ int main()
 	g_toggleJump = true;
 	for (int i = 0; i < 5; ++i)
 		frame();
-	check(g_walk.on && g_frozenOf[1], "(Minecraft's movement again, the player frozen)");
+	check(g_walk.on, "(Minecraft's movement again)");
 	g_playerPed = 2;
 	frame();
 	check(g_visible[1] && !g_frozenOf[1], "a character switch: the old character shows again and isn't frozen");
@@ -1131,7 +1130,7 @@ int main()
 				  std::find(g_calls.begin(), g_calls.end(), "Velocity:" + copy) != g_calls.end(),
 			"a sign the crosshair is on is knocked flying (among 400 other things): the plugin's copy of it");
 		check(std::count_if(g_calls.begin(), g_calls.end(), [](const std::string &c) { return c.rfind("Copy:", 0) == 0; }) == 1 &&
-				  std::count_if(g_calls.begin(), g_calls.end(), [](const std::string &c) { return c.rfind("ApplyForce:", 0) == 0; }) == 0,
+				  std::count_if(g_calls.begin(), g_calls.end(), [&](const std::string &c) { return c.rfind("ApplyForce:", 0) == 0 && c != "ApplyForce:" + copy; }) == 0,
 			"and nothing else (a swing hits what it's on)");
 		check(std::find(g_calls.begin(), g_calls.end(), "Velocity:301") == g_calls.end() &&
 				  std::find(g_calls.begin(), g_calls.end(), "ApplyForce:301") == g_calls.end(),
@@ -1251,66 +1250,6 @@ int main()
 		frame();
 	check(std::find(g_calls.begin(), g_calls.end(), "Out:6") != g_calls.end(), "/kill @e: someone in a car still alive shortly after is taken out of it and killed");
 	g_npcs.clear();
-
-	// ---- mining GTA's world ----
-	{
-		for (int i = 0; i < 4; ++i)
-			frame();
-		// (solid ground under the street here, as GTA's: no underside to see from below)
-		const Box street = g_world[0];
-		g_world[0].z0 = -30.0f;
-		// the street cell under the player's feet (Minecraft y 9: GTA 9.4..10.4, the floor box's top layer)
-		const int cx = int(std::floor(g_walk.x)) + 2, cz = int(std::floor(-g_walk.y)), cy = 9;
-		char m[160];
-		snprintf(m, sizeof(m), "{\"t\":\"dug\",\"c\":[%d,%d,%d],\"k\":1}", cx, cy, cz);
-		g_in.push_back(m);
-		frame();
-		check(g_dug.count(cell_key(cx, cy, cz)) == 1, "a cell of GTA's street mined: dug out");
-		int fills = 0;
-		std::string fillMsg;
-		for (const std::string &o : g_out)
-			if (o.find("\"t\":\"digfill\"") != std::string::npos)
-				fillMsg = o;
-		for (size_t at = fillMsg.find('['); at != std::string::npos && at < fillMsg.size(); at = fillMsg.find(',', at + 1))
-			++fills;
-		std::printf("      %s\n", fillMsg.c_str());
-		char below[48], above[48];
-		snprintf(below, sizeof(below), "%d,%d,%d,", cx, cy - 1, cz);
-		snprintf(above, sizeof(above), "%d,%d,%d,", cx, cy + 1, cz);
-		check(fillMsg.find(below) != std::string::npos && fillMsg.find(above) == std::string::npos && g_digFill.size() == 5,
-			"the ground round it (below and beside) filled with Minecraft's blocks; the air above not");
-		frame(); // (sent with the next frame)
-		check(compositor::g_digCells == 6, "the shader gets the dug cell and the ones round it");
-		Vector3 at = {}, n = {};
-		const bool overHole = solid_probe(1, cx + 0.5f, -(cz + 0.5f), 12.0f, cx + 0.5f, -(cz + 0.5f), 8.0f, at, n);
-		const bool beside = solid_probe(1, cx + 3.5f, -(cz + 0.5f), 12.0f, cx + 3.5f, -(cz + 0.5f), 8.0f, at, n);
-		check(!overHole && beside, "GTA's street isn't there over the hole (the player can go down it), still beside it");
-		// a door (one of GTA's things) where the crosshair is: hidden, not dug
-		g_types[501] = 3;
-		g_world.push_back({cx + 5.0f, -(cz + 1.0f), 10.4f, cx + 5.1f, -float(cz), 12.4f, 501});
-		snprintf(m, sizeof(m), "{\"t\":\"dug\",\"c\":[%d,%d,%d],\"k\":3,\"o\":1}", cx + 5, 10, cz);
-		g_calls.clear();
-		g_in.push_back(m);
-		frame();
-		check(std::find(g_calls.begin(), g_calls.end(), "Hide") != g_calls.end() && !g_dug.count(cell_key(cx + 5, 10, cz)),
-			"a door mined: it's taken away (hidden), not dug");
-		g_world.pop_back();
-		// /clearall: all back
-		g_calls.clear();
-		g_in.push_back("{\"t\":\"gtacmd\",\"c\":\"clearall\"}");
-		frame();
-		frame();
-		check(g_dug.empty() && g_digFill.empty() && std::find(g_calls.begin(), g_calls.end(), "Unhide") != g_calls.end() && compositor::g_digCells == 0,
-			"/clearall: nothing dug any more, the door back");
-		// under a bridge (the street as a slab with open air under it): the cell under it isn't filled
-		g_world[0] = street;
-		snprintf(m, sizeof(m), "{\"t\":\"dug\",\"c\":[%d,%d,%d],\"k\":0}", cx, cy, cz);
-		g_in.push_back(m);
-		frame();
-		check(g_dug.size() == 1 && !g_digFill.count(cell_key(cx, cy - 1, cz)), "under a bridge's deck: the open air below isn't filled");
-		g_in.push_back("{\"t\":\"gtacmd\",\"c\":\"clearall\"}");
-		frame();
-	}
 
 	// ---- Minecraft's fire: GTA's people by it catch fire, and it's GTA's fire too ----
 	{
