@@ -661,18 +661,24 @@ namespace
 		va_end(again);
 	}
 
-	/// Steve stands in for GTA's player: it isn't drawn, this frame (called every frame). Only not drawn: GTA's people
-	/// still see the player (made invisible for real, a mission's enemies never spotted it and its guards never
-	/// noticed, so scripted fights and chases didn't start), and a mission showing or hiding it isn't fought.
+	/// Steve stands in for GTA's player: hide it (again, if a mission showed it), or give back the one we hid. (Hidden
+	/// for real: only not drawn a frame at a time, GTA still drew the character's head in first person, in the way of
+	/// everything, and showed it through Steve.)
 	void hide_player(Ped ped)
 	{
+		if (g_hiddenPed != 0 && g_hiddenPed != ped && natives::DoesEntityExist(g_hiddenPed))
+			natives::SetEntityVisible(g_hiddenPed, TRUE, FALSE); // the character switched away from shows again
+		if (natives::IsEntityVisible(ped))
+			natives::SetEntityVisible(ped, FALSE, FALSE);
 		natives::SetEntityLocallyInvisible(ped);
 		g_hiddenPed = ped;
 	}
 
 	void unhide_player()
 	{
-		g_hiddenPed = 0; // (nothing to undo: it was only not drawn, a frame at a time)
+		if (g_hiddenPed != 0 && natives::DoesEntityExist(g_hiddenPed))
+			natives::SetEntityVisible(g_hiddenPed, TRUE, FALSE);
+		g_hiddenPed = 0;
 	}
 
 	/// GTA's water surface over (x, y) between `low` (its bed, or the feet) and `high`, if there's water there. (GET_WATER_HEIGHT
@@ -8761,10 +8767,7 @@ namespace
 							g_wantInventory = true;
 					}
 				}
-				// E or I: Minecraft's inventory, T: its chat (either hands). Not while GTA's own keyboard (a name, a cheat)
-				// or the phone takes the keys: those letters were being typed there
-				if (natives::UpdateOnscreenKeyboard() == 0 || natives::CanPhoneBeSeenOnScreen())
-					g_wantChat = g_wantInventory = false;
+				// E or I: Minecraft's inventory, T: its chat (either hands)
 				if (g_wantInventory.exchange(false))
 				{
 					g_ws.send("{\"t\":\"key\",\"k\":\"inventory\",\"down\":true}");

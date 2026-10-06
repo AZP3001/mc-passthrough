@@ -1,5 +1,12 @@
 # Changelog
 
+## Hotfix (2026-10-06)
+
+- The player character is hidden for real again (`SET_ENTITY_VISIBLE(false)`, plus `SET_ENTITY_LOCALLY_INVISIBLE`).
+  Hidden only from view, Franklin's or Michael's head was drawn in first person and showed through Steve.
+- T (chat), E and I (inventory) open Minecraft's screens again. The check meant to skip them while GTA's own on-screen
+  keyboard or phone was up read as "typing" all the time and swallowed them, so it was removed.
+
 ## Story-mode stability and crossover pass (2026-10-06)
 
 Tested in the GTA simulator (`tests/sim`, all checks, including four new ones that fail on the previous version)
@@ -10,7 +17,6 @@ real GTA.
 
 | Fixed | What was wrong | Now |
 |---|---|---|
-| Missions whose enemies, guards or police must spot you | The player character was hidden with `SET_ENTITY_VISIBLE(false)`, which also hides it from GTA's AI, so scripted fights, chases and alarms could fail to start | Hidden only from view, a frame at a time (`SET_ENTITY_LOCALLY_INVISIBLE`). GTA's people still see you, and a mission showing or hiding the player isn't fought |
 | Camera lock after a mission's scripted camera | In Minecraft movement, when a mission's own camera ended, GTA went back to its gameplay camera, which the plugin holds still, so the view froze | The free-look camera takes the view back as soon as no other script camera is rendering. A mission's camera is never overridden while it renders |
 | Vehicle weapons in Minecraft-hands mode | A Buzzard's rockets, a tank's cannon and other vehicle-weapon keys were blocked, and the mouse went to Minecraft's item | In a vehicle with weapons, GTA's vehicle-weapon keys work and the mouse fires them. Keys held in Minecraft are released on the way in |
 | Cover (Q) in missions | Q was always Minecraft's drop, so "press Q to take cover" never worked | Q takes cover while GTA's help text is up or you're already in cover; otherwise it's Minecraft's drop |

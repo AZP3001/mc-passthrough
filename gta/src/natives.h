@@ -304,8 +304,6 @@ namespace natives
 	inline Hash GetSelectedPedWeapon(Ped p) { return invoke<Hash>(0x0A6DB4965674D243, p); }
 	inline BOOL HasPedGotWeapon(Ped p, Hash w) { return invoke<BOOL>(0x8DECB02F88F428BC, p, w, FALSE); }
 	inline BOOL GetMissionFlag() { return invoke<BOOL>(0xA33CDCCDA663159E); }
-	inline int UpdateOnscreenKeyboard() { return invoke<int>(0x0CF2B696BBF945AE); }
-	inline BOOL CanPhoneBeSeenOnScreen() { return invoke<BOOL>(0xC4E2813898C97A4B); }
 	// Story-mode stability and crossovers (vehicle weapons, breath, splashes, kills).
 	inline BOOL DoesVehicleHaveWeapons(Vehicle v) { return invoke<BOOL>(0x25ECB9F8017D98E0, v); }
 	inline float GetPlayerUnderwaterTimeRemaining(Player p) { return invoke<float>(0xA1FCF8E6AF40B731, p); }

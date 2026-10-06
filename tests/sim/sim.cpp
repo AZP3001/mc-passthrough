@@ -299,8 +299,6 @@ PUINT64 nativeCall()
 		retI(g_renderingCam);
 	else if (h == H_RenderScriptCams)
 		g_renderingCam = I(0) ? 77 : -1;
-	else if (h == H_UpdateOnscreenKeyboard)
-		retI(3); // (GTA's keyboard isn't up)
 	else if (npc == g_npcs.end() && h == H_GetEntityModel && g_types.count(I(0)) && g_types[I(0)] == 3)
 		retI(0x5151); // (one of GTA's things)
 	else if (h == H_IsModelValid && I(0) == 0x5151)

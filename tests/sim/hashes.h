@@ -248,12 +248,9 @@
 #define H_GetSelectedPedWeapon 0x0A6DB4965674D243ull
 #define H_HasPedGotWeapon 0x8DECB02F88F428BCull
 #define H_GetMissionFlag 0xA33CDCCDA663159Eull
-#define H_UpdateOnscreenKeyboard 0x0CF2B696BBF945AEull
-#define H_CanPhoneBeSeenOnScreen 0xC4E2813898C97A4Bull
 #define H_DoesVehicleHaveWeapons 0x25ECB9F8017D98E0ull
 #define H_GetPlayerUnderwaterTimeRemaining 0xA1FCF8E6AF40B731ull
 #define H_IsPedSwimmingUnderWater 0xC024869A53992F34ull
-#define H_GetPedSourceOfDeath 0x93C8B64DEB84728Cull
 #define H_IsPedInCover 0x60DFD0691A170B88ull
 #define H_GetRenderingCam 0x5234F9F10919EABAull
 #define H_IsEntityInWater 0xCFB0A0D8EDD145A3ull
