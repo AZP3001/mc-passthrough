@@ -317,6 +317,8 @@ PUINT64 nativeCall()
 	}
 	else if (h == H_CreateModelHideExcludingScriptObjects)
 		g_calls.push_back("Hide");
+	else if (h == H_ClearArea || h == H_ClearAreaOfPeds || h == H_ClearAreaOfVehicles)
+		g_calls.push_back("ClearArea");
 	else if (h == H_RemoveModelHide)
 		g_calls.push_back("Unhide");
 	else if (npc == g_npcs.end() && h == H_SetEntityVelocity && I(0) != 1)
@@ -1250,6 +1252,12 @@ int main()
 		frame();
 	check(std::find(g_calls.begin(), g_calls.end(), "Out:6") != g_calls.end(), "/kill @e: someone in a car still alive shortly after is taken out of it and killed");
 	g_npcs.clear();
+
+	// ---- /clearall: Minecraft's things and what was moved go; GTA's own cars and people stay ----
+	g_calls.clear();
+	g_in.push_back("{\"t\":\"gtacmd\",\"c\":\"clearall\"}");
+	frame();
+	check(std::find(g_calls.begin(), g_calls.end(), "ClearArea") == g_calls.end(), "/clearall leaves GTA's own cars and people alone");
 
 	// ---- Minecraft's fire: GTA's people by it catch fire, and it's GTA's fire too ----
 	{

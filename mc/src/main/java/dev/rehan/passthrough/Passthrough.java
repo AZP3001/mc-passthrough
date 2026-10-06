@@ -268,7 +268,7 @@ public class Passthrough implements ModInitializer {
 				context.getSource().sendSystemMessage(Component.literal(flyAllowed ? "Flying on (/fly again for off)" : "Flying off"));
 				return 1;
 			}));
-			// everything gone but the inventory: mobs, items, blocks placed, and the host's cars and people around
+			// everything of Minecraft's gone but the inventory: mobs, items, blocks placed; the host's things moved go back
 			dispatcher.register(Commands.literal("clearall").executes(context -> {
 				ServerPlayer player = context.getSource().getPlayer() != null ? context.getSource().getPlayer()
 					: context.getSource().getServer().getPlayerList().getPlayers().stream().findFirst().orElse(null);

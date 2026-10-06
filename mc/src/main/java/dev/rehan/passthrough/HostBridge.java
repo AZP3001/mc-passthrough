@@ -264,7 +264,7 @@ public final class HostBridge {
 
 	/**
 	 * /clearall: every entity but the players goes, and every block placed around the player (not the host's ground),
-	 * the Nether and the End close; the host clears its cars, people and fires around the player too. Server thread.
+	 * the Nether and the End close; the host puts back what of its own was moved (its cars and people stay). Server thread.
 	 */
 	static int clearAll(final MinecraftServer s, final ServerPlayer player) {
 		return clearAll(s, player, true);
@@ -287,7 +287,7 @@ public final class HostBridge {
 		}
 	}
 
-	/** hostToo: the host clears its own cars, people and fires round the player too (/clearall). */
+	/** hostToo: /clearall (the host says so); else a mission restart (said in chat here). */
 	static int clearAll(final MinecraftServer s, final ServerPlayer player, final boolean hostToo) {
 		ServerLevel level = s.overworld();
 		Nether.closeIfOpen(level);

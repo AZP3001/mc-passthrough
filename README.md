@@ -203,7 +203,7 @@ Type them in Minecraft's chat (T):
 |---|---|
 | `/spectator` | spectator, as in Minecraft: fly through everything, unseen. Space up, C down |
 | `/creative` | back to creative |
-| `/clearall` | clears all mobs, items and blocks you placed, and GTA's cars, people and fires around you. Your inventory stays |
+| `/clearall` | clears all mobs, items and blocks you placed, and puts back GTA's things you moved (signs, bins, doors knocked loose). GTA's cars and people stay. Your inventory stays |
 | `/kill @e` | kills Minecraft's mobs **and** GTA's people and animals around you (`/kill @e[type=cow]`: only cows) |
 | `/time set night` | sets GTA's clock too (`day`, `noon`, `night`, `midnight`, or a number) |
 | `/weather rain` | sets GTA's weather too (`clear`, `rain`, `thunder`) |

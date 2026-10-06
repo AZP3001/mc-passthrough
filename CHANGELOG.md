@@ -28,6 +28,7 @@ Tested in the GTA simulator (`tests/sim`, all checks) and in Minecraft (`tests/*
 | Steve dark in cutscenes | Steve took the light of the room round him, often dark | In cutscenes Steve is lit at least as GTA lights its characters (`SteveMinLight`) |
 | Minecraft's water hid the street | Water (70% covered) counted as solid | Water, glass and ice blend with GTA again (`SolidCoverage`, 0.85) |
 | Jump in mid-air | Holding Space by a wall in a fall climbed it, from where you'd last stood | Climbing only from the ground (or the jump just taken from it) |
+| `/clearall` killed GTA's people and cars | It cleared GTA's whole area round you too (a mission's people and cars with it) | It clears only Minecraft's things and puts back what of GTA's you moved (signs, bins, doors knocked loose); GTA's cars and people stay |
 | Too much health | A totem's hidden 2000 health, left on by a save or a reload, never came off | Back to the story characters' 200 |
 
 ### Added

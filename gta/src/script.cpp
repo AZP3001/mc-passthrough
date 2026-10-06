@@ -8025,14 +8025,10 @@ namespace
 			g_waterClusters.clear();
 			leash_clear_all(player, false);
 			riders_clear_all(false);
-			loose_clear();
-			// (soft: a mission restarted, mission_restart_tick; its cars and people are the mission's, they stay)
+			loose_clear(); // (GTA's things knocked loose, a door torn off: back where they stood)
+			// GTA's own cars, people and fires stay (they may be a mission's); soft: a mission restarted, said in chat
 			if (json_value(m, "soft") == nullptr)
-			{
-				natives::ClearArea(me.x, me.y, me.z, 400.0f);
-				natives::StopFireInRange(me.x, me.y, me.z, 400.0f);
-				natives::Notify("Cleared: Minecraft's mobs, items and blocks, and GTA's cars, people and fires around you");
-			}
+				natives::Notify("Cleared: Minecraft's mobs, items and blocks, and GTA's things you moved (GTA's cars and people stay)");
 		}
 	}
 
