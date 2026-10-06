@@ -97,6 +97,14 @@ namespace natives
 	inline void SetVehicleDirtLevel(Vehicle v, float d) { invoke<Void>(0x79D3B596FE44EE8B, v, d); }
 	inline void TaskHandsUp(Ped p, int ms, Ped facing) { invoke<Void>(0xF2EAB31979A7F910, p, ms, facing, -1, 0); }
 	inline void TaskCower(Ped p, int ms) { invoke<Void>(0x3EB1FE9E8E908E15, p, ms); }
+	// a car's driver at a bow: back off (3: brake and reverse), honk, or drive at the player (mission 2: ram)
+	inline void TaskVehicleTempAction(Ped driver, Vehicle v, int action, int ms) { invoke<Void>(0xC429DCEEB339E129, driver, v, action, ms); }
+	inline void StartVehicleHorn(Vehicle v, int ms) { invoke<Void>(0x9C8C6504B5B63D2C, v, ms, 0x839504CB /* HELDDOWN */, FALSE); }
+	inline void TaskVehicleMissionPedTarget(Ped driver, Vehicle v, Ped target, int mission, float speed, int style)
+	{
+		invoke<Void>(0x9454528DF15D657A, driver, v, target, mission, speed, style, 1.0f, 40.0f, TRUE);
+	}
+	inline int GetRandomIntInRange(int from, int to) { return invoke<int>(0xD53343AA4FB7DD28, from, to); }
 	inline void TaskSmartFleePed(Ped p, Ped from, float dist, int ms) { invoke<Void>(0x22B0D0E37CCB840D, p, from, dist, ms, FALSE, FALSE); }
 	inline void SetCamMotionBlurStrength(Cam c, float s) { invoke<Void>(0x6F0F77FBA9A8F2E6, c, s); }
 	inline void SetCamUseShallowDofMode(Cam c, BOOL on) { invoke<Void>(0x16A96863A17552BB, c, on); }

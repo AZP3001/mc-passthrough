@@ -67,7 +67,8 @@ struct SimPed
 } g_sped;
 int64_t g_nanos = 1000000000LL;
 int g_ms = 10000, g_frame = 0;
-float g_camHeading = 0, g_camPitch = 0;
+float g_camHeading = 0, g_camPitch = 0, g_camFov = 0;
+bool g_propsLoad = false; // the props for Minecraft's blocks can be made (their model loads)
 bool g_cutscene = false;
 int g_renderingCam = -1; // the camera GTA renders (-1: its gameplay camera)
 int g_playerPed = 1;                 // PLAYER_PED_ID (a character switch changes it)
@@ -262,6 +263,10 @@ PUINT64 nativeCall()
 	}
 	else if (npc != g_npcs.end() && h == H_GetEntityModel)
 		retI(int(npc->second.model));
+	else if (npc != g_npcs.end() && h == H_ApplyDamageToPed)
+		g_calls.push_back("Dmg:" + std::to_string(I(0)) + ":" + std::to_string(I(1)));
+	else if (npc != g_npcs.end() && h == H_GetEntityMaxHealth)
+		retI(200);
 	else if (npc != g_npcs.end() && h == H_IsPedHuman)
 		retI(npc->second.human);
 	else if (npc != g_npcs.end() && (h == H_IsPedDeadOrDying || h == H_IsPedFatallyInjured || h == H_IsEntityDead))
@@ -301,6 +306,13 @@ PUINT64 nativeCall()
 		g_renderingCam = I(0) ? 77 : -1;
 	else if (npc == g_npcs.end() && h == H_GetEntityModel && g_types.count(I(0)) && g_types[I(0)] == 3)
 		retI(0x5151); // (one of GTA's things)
+	else if (g_propsLoad && (h == H_IsModelValid || h == H_HasModelLoaded))
+		retI(1);
+	else if (g_propsLoad && h == H_CreateObjectNoOffset)
+	{
+		static int next = 8000;
+		retI(next++);
+	}
 	else if (h == H_IsModelValid && I(0) == 0x5151)
 		retI(1);
 	else if (h == H_HasModelLoaded && I(0) == 0x5151)
@@ -368,6 +380,8 @@ PUINT64 nativeCall()
 		retI(77);
 	else if (h == H_DoesEntityExist)
 		retI(I(0) != 0);
+	else if (h == H_SetCamFov)
+		g_camFov = F(1);
 	else if (h == H_SetCamRot)
 	{
 		// the free-look camera: what renders (the simulator has one camera for both)
@@ -402,7 +416,7 @@ PUINT64 nativeCall()
 			g_sped.heading = F(1);
 	}
 	else if (h == H_GetEntityHeading)
-		retF(g_sped.heading);
+		retF(I(0) == 70 ? 0.0f : g_sped.heading); // (the car faces north, as its wheel is placed)
 	else if (h == H_GetGameTimer)
 		retI(g_ms);
 	else if (h == H_GetFrameCount)
@@ -903,6 +917,18 @@ int main()
 	frame();
 	g_look[2] = 0.0f;
 	g_kbm = false;
+	// Ctrl held: zoomed to a quarter of the view (OptiFine's zoom), and back when let go
+	{
+		const float wide = g_camFov;
+		g_pressed = {36};
+		for (int i = 0; i < 30; ++i)
+			frame();
+		const float zoomed = g_camFov;
+		g_pressed = {};
+		for (int i = 0; i < 30; ++i)
+			frame();
+		check(wide > 20.0f && zoomed < wide * 0.27f && std::fabs(g_camFov - wide) < 0.5f, "Ctrl zooms in to a quarter of the view, and back out");
+	}
 
 	// the minimap's mask: off by default (Minecraft's blocks show there too)
 	frame();
@@ -1005,8 +1031,89 @@ int main()
 	}
 	frame();
 	check(std::find(g_calls.begin(), g_calls.end(), "TyreBurst:0") != g_calls.end(), "an arrow in a car's wheel bursts that tyre");
+
+	// lava under the car's back right corner: no tyre near it pops (they all did, wherever the lava was); under its front
+	// left wheel: that one
+	auto lava_at = [](float x, float y, bool on) {
+		char m[160];
+		snprintf(m, sizeof(m), "{\"t\":\"hot\",\"%s\":[%d,%d,%d]}", on ? "lava" : "clear", int(std::floor(x)),
+			int(std::floor(g_car.z + g_yOffset - 1.0f)), int(std::floor(-y)));
+		g_in.push_back(m);
+	};
+	g_calls.clear();
+	lava_at(g_car.x + 0.8f, g_car.y - 1.8f, true);
+	for (int i = 0; i < 20; ++i)
+		frame();
+	check(std::none_of(g_calls.begin(), g_calls.end(), [](const std::string &c) { return c.rfind("TyreBurst:", 0) == 0; }),
+		"lava under a car's back corner: its front wheel's tyre stays whole");
+	lava_at(g_car.x + 0.8f, g_car.y - 1.8f, false);
+	lava_at(g_car.x - 0.8f, g_car.y + 1.8f, true);
+	for (int i = 0; i < 20; ++i)
+		frame();
+	check(std::find(g_calls.begin(), g_calls.end(), "TyreBurst:0") != g_calls.end(), "lava under its front left wheel pops that tyre");
+	lava_at(g_car.x - 0.8f, g_car.y + 1.8f, false);
+	frame();
+
+	// flowing water under the car: carried along every frame (it was shoved four times a second and lurched)
+	{
+		char m[160];
+		const int wx = int(std::floor(g_car.x)), wy = int(std::floor(g_car.z - 0.6f + g_yOffset + 0.2f)), wz = int(std::floor(-g_car.y));
+		snprintf(m, sizeof(m), "{\"t\":\"water\",\"set\":[%d,%d,%d,1000,0]}", wx, wy, wz);
+		g_in.push_back(m);
+		frame();
+		frame();
+		g_calls.clear();
+		for (int i = 0; i < 30; ++i)
+			frame();
+		const auto pushes = std::count(g_calls.begin(), g_calls.end(), std::string("Velocity:70"));
+		check(pushes >= 25, ("a car in flowing water is carried along every frame (" + std::to_string(pushes) + " of 30)").c_str());
+		snprintf(m, sizeof(m), "{\"t\":\"water\",\"clear\":[%d,%d,%d]}", wx, wy, wz);
+		g_in.push_back(m);
+		frame();
+	}
 	g_world.pop_back();
 	g_car.on = false;
+
+	// a block built 60 m off: GTA's prop for it all the same, so cars there hit it (only within 30 m, they drove through)
+	{
+		g_propsLoad = true;
+		const auto key = std::make_tuple(int(std::floor(g_sped.x)), int(std::floor(g_sped.z - 1.0f + g_yOffset)), int(std::floor(-(g_sped.y + 60.0f))));
+		char m[160];
+		snprintf(m, sizeof(m), "{\"t\":\"blocks\",\"set\":[%d,%d,%d]}", std::get<0>(key), std::get<1>(key), std::get<2>(key));
+		g_in.push_back(m);
+		for (int i = 0; i < 40; ++i)
+			frame();
+		check(g_props.live.count(key) != 0, "a block built 60 m off has GTA collision (cars hit it)");
+		snprintf(m, sizeof(m), "{\"t\":\"blocks\",\"clear\":[%d,%d,%d]}", std::get<0>(key), std::get<1>(key), std::get<2>(key));
+		g_in.push_back(m);
+		frame();
+		g_propsLoad = false;
+	}
+
+	// an arrow at someone 60 m off (GTA gives far-off people no collision for a line): hit all the same; the bow takes
+	// half a person's health (two hits kill), all of it in the head
+	for (const bool head : {false, true})
+	{
+		const int who = head ? 82 : 81;
+		const float chest = g_sped.z + 0.4f;
+		g_npcs[who] = SimNpc{g_sped.x, g_sped.y + 60.0f, head ? chest - 0.62f : chest - 0.1f};
+		g_types[who] = 1;
+		g_calls.clear();
+		g_in.push_back("{\"t\":\"proj\",\"p\":[]}");
+		frame();
+		char m[200];
+		snprintf(m, sizeof(m), "{\"t\":\"proj\",\"p\":[[%d,\"arrow\",%.3f,%.3f,%.3f]]}", 903 + who, g_sped.x, chest + g_yOffset, -(g_sped.y + 1.0));
+		g_in.push_back(m);
+		frame();
+		snprintf(m, sizeof(m), "{\"t\":\"proj\",\"p\":[[%d,\"arrow\",%.3f,%.3f,%.3f]]}", 903 + who, g_sped.x, chest + g_yOffset, -(g_sped.y + 70.0));
+		g_in.push_back(m);
+		frame();
+		const std::string want = "Dmg:" + std::to_string(who) + ":" + (head ? "10000" : "51");
+		check(std::find(g_calls.begin(), g_calls.end(), want) != g_calls.end(),
+			head ? "an arrow in the head of someone 60 m off kills" : "an arrow in someone 60 m off: half their health (two hits kill)");
+		g_npcs.erase(who);
+		g_types.erase(who);
+	}
 
 	// ---- a lead ----
 	// out in the open (GTA y -20), someone slim 3 m north of the player

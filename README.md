@@ -55,7 +55,8 @@ You play GTA's story as Steve, with Minecraft's items, blocks, mobs and movement
 - Straight (the mod's own bow enchantment, one level, from the enchanting table or `/enchant`): the arrow flies dead
   straight with no gravity, and is gone after 500 blocks.
 - A drawn bow or crossbow pointed at someone: they put their hands up (or run). Cops, soldiers and anyone fighting only
-  look at you. Pointed at a car, only that car's people get out with their hands up.
+  look at you. Pointed at a car, its driver reacts as to a gun in GTA: most honk and drive off angry, some back off
+  and flee, a few give up (everyone gets out, hands up), and now and then one drives at you.
 - Arrows hit people and cars, burst the tyre they hit, and break GTA's glass (shop windows, car windows).
 - Ender pearls fly 2.5× as far and land on GTA's walls, floors and ceilings. Thrown from a car, the car comes with you.
 - TNT and creepers blow up in both games. Fireworks become rockets, and you can throw potions, wind charges and
@@ -177,6 +178,7 @@ FORCE=1 ./gta/install.sh
 | Space | Minecraft's jump; flying: go up. **Hold** it at a ledge too high to jump and GTA climbs it |
 | Space twice | in the air with an elytra on: glide. In a car (driver's seat, after `/fly`): the car flies with you; twice again to drive |
 | mouse | look all the way up and down (Minecraft movement) |
+| hold Ctrl | zoom in, like OptiFine's zoom (Minecraft movement) |
 | V | first person / third person (near, middle, far) |
 | left mouse | attack: break blocks, swing what you hold |
 | right mouse | use: place blocks, pour water, shoot, throw pearls and potions, eat |

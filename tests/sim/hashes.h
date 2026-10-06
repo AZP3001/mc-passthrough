@@ -68,6 +68,10 @@
 #define H_SetVehicleDirtLevel 0x79D3B596FE44EE8Bull
 #define H_TaskHandsUp 0xF2EAB31979A7F910ull
 #define H_TaskCower 0x3EB1FE9E8E908E15ull
+#define H_TaskVehicleTempAction 0xC429DCEEB339E129ull
+#define H_StartVehicleHorn 0x9C8C6504B5B63D2Cull
+#define H_TaskVehicleMissionPedTarget 0x9454528DF15D657Aull
+#define H_GetRandomIntInRange 0xD53343AA4FB7DD28ull
 #define H_TaskSmartFleePed 0x22B0D0E37CCB840Dull
 #define H_SetCamMotionBlurStrength 0x6F0F77FBA9A8F2E6ull
 #define H_SetCamUseShallowDofMode 0x16A96863A17552BBull

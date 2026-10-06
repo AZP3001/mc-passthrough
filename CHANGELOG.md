@@ -1,5 +1,23 @@
 # Changelog
 
+## Range, bow, lava, water, zoom (2026-10-06)
+
+Tested in the GTA simulator (all checks, new ones for each row marked *) and in Minecraft (`fall_test.py`,
+`features_test.py`, `water_test.py`, all passing). Not yet tried in real GTA.
+
+| Change | Now |
+|---|---|
+| Arrows missed people far off* | GTA gives people more than a street away no collision for line probes, so arrows flew through them. An arrow now also hits whoever is within a hand's breadth of its path. Melee's same fallback is a little wider |
+| `/range` forgotten | If the GTA script restarted, its reach went back to 8 while Minecraft kept yours. Minecraft now sends it again on every connect |
+| Bow damage* | Two body hits kill a person, one to the head (an arrow was a sniper bullet's worth: one hit anywhere) |
+| Bow at cars | The driver reacts as to a gun in GTA: most honk and drive off angry, some back off and flee, a few give up (everyone out, hands up), and now and then one drives at you. Police and armed people only look |
+| Ctrl zoom* | Hold Ctrl in Minecraft's movement to zoom to a quarter of the view, mouse slowed to match |
+| Riptide in freefall | A riptide during GTA's skydive (in the rain) now takes over: GTA's skydive had kept Minecraft's movement off |
+| Lava on cars* | Only the tyres in the lava pop (it popped them all). The car dents where the lava touches it, at body height, so it shows. It's pushed out harder, and through if it sits in lava all over |
+| Water push* | Cars and loose objects are eased toward the water's pace every frame (they were shoved four times a second and lurched). You're only carried while on your feet, so jumps and falls aren't cancelled |
+| Built blocks far off* | Blocks get GTA collision up to 100 m away (was 30 m), and blocks buried on all sides get none, so the 400-prop budget reaches further. GTA's own cars far from you may still drive through: GTA runs distant traffic without physics |
+| GTA water | Minecraft movement's "in GTA's water" checks know rivers now. The log (`MCPassthrough.log`) notes GTA's water sent to Minecraft, arrow splashes, riptides, and going in and out of water, to find why swimming and riptide fail in real GTA |
+
 ## Water push, smaller Steve, spawn fix (2026-10-06)
 
 Tested in the GTA simulator (all checks) and in Minecraft (`fall_test.py` with a new spawn check, `features_test.py`,

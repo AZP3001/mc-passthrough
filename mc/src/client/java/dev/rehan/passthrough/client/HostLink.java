@@ -69,6 +69,8 @@ public final class HostLink extends WebSocketServer {
 
 		Passthrough.LOG.info("host connected from {}", conn.getRemoteSocketAddress());
 		conn.send(String.format(Locale.ROOT, "{\"t\":\"hello\",\"v\":1,\"shm\":\"%s\",\"pid\":%d}", FrameExporter.NAME.replace("\\", "\\\\"), ProcessHandle.current().pid()));
+		// the reach (/range) again: the host's script, restarted, had forgotten it (its hits stopped at 8 blocks)
+		conn.send(String.format(Locale.ROOT, "{\"t\":\"gtacmd\",\"c\":\"range\",\"r\":%.2f}", HostBridge.reach));
 	}
 
 	@Override
