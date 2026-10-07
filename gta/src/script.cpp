@@ -682,6 +682,7 @@ namespace
 	bool g_exhausted = false;
 	int g_staminaRestAt = 0;
 	bool g_mcScoping = false;  // Minecraft's player looks through a spyglass (the camera zooms in)
+	int g_ctrlZoomAt = -1000;  // when Ctrl's zoom was last held (meanwhile the mouse wheel zooms, not the hotbar)
 	bool g_mapLocked = false;  // the minimap turned by our camera (GTA's turns by its own only)
 	bool g_mcTotem = false;    // Minecraft's player holds a totem of undying (it saves GTA's player from dying)
 	// While a totem is held, GTA's player has this much hidden health on top (a one-hit death, a blast or a sniper,
@@ -8298,8 +8299,20 @@ namespace
 		g_walkCam.last = now;
 		// a spyglass zooms in (eased, as Minecraft's does), and so does holding Ctrl (OptiFine's zoom: a quarter of the
 		// view); the mouse turns slower with it
-		static float zoom = 1.0f;
-		zoom += ((g_mcScoping ? 0.15f : !screen && natives::IsDisabledControlPressed(0, 36) ? 0.25f : 1.0f) - zoom) * 0.25f;
+		// (the mouse wheel zooms further in or out while Ctrl is held; let go, and it's a quarter again next time)
+		static float zoom = 1.0f, ctrlZoom = 0.25f;
+		const bool ctrl = !screen && !g_mcScoping && natives::IsDisabledControlPressed(0, 36);
+		if (ctrl)
+		{
+			g_ctrlZoomAt = natives::GetGameTimer();
+			if (natives::IsDisabledControlJustPressed(0, 15) || natives::IsDisabledControlJustPressed(0, 17))
+				ctrlZoom = std::max(0.03f, ctrlZoom * 0.8f);
+			if (natives::IsDisabledControlJustPressed(0, 14) || natives::IsDisabledControlJustPressed(0, 16))
+				ctrlZoom = std::min(0.8f, ctrlZoom / 0.8f);
+		}
+		else
+			ctrlZoom = 0.25f;
+		zoom += ((g_mcScoping ? 0.15f : ctrl ? ctrlZoom : 1.0f) - zoom) * 0.25f;
 		for (const int c : {0, 1, 2}) // GTA's own camera stays put (it isn't the one rendering), and V is ours
 			natives::DisableControlAction(0, c, TRUE);
 		if (!screen)
@@ -9101,9 +9114,11 @@ namespace
 						forward_button(24, "attack");
 						forward_button(25, "use", g_missionAim ? VK_RBUTTON : 0);
 					}
-					if (!phone && (natives::IsDisabledControlJustPressed(0, 14) || natives::IsDisabledControlJustPressed(0, 16)))
+					// (zooming with Ctrl: the wheel is the zoom's)
+					const bool zooming = natives::GetGameTimer() - g_ctrlZoomAt < 150;
+					if (!phone && !zooming && (natives::IsDisabledControlJustPressed(0, 14) || natives::IsDisabledControlJustPressed(0, 16)))
 						g_ws.send("{\"t\":\"scroll\",\"d\":-1}");
-					if (!phone && (natives::IsDisabledControlJustPressed(0, 15) || natives::IsDisabledControlJustPressed(0, 17)))
+					if (!phone && !zooming && (natives::IsDisabledControlJustPressed(0, 15) || natives::IsDisabledControlJustPressed(0, 17)))
 						g_ws.send("{\"t\":\"scroll\",\"d\":1}");
 					for (int i = 0; i < 9; ++i)
 						if (natives::IsDisabledControlJustPressed(0, kHotbarControls[i]))

@@ -44,7 +44,14 @@ public final class StraightArrows {
 		ItemStack bow = arrow.getWeaponItem();
 		if (arrow.tickCount == 0 && arrow.getOwner() instanceof net.minecraft.world.entity.player.Player
 			&& bow != null && (bow.is(Items.BOW) || bow.is(Items.CROSSBOW))) {
-			arrow.setDeltaMovement(arrow.getDeltaMovement().scale(3.0));
+			// and dead on where the player looks: no spread (Minecraft scatters a bow's arrows a little). A crossbow's
+			// Multishot side arrows, 10 degrees off, stay as they are
+			Vec3 v = arrow.getDeltaMovement(), look = arrow.getOwner().getLookAngle();
+			if (v.length() > 1.0E-4 && v.normalize().dot(look) > Math.cos(Math.toRadians(5.0))) {
+				v = look.scale(v.length());
+			}
+
+			arrow.setDeltaMovement(v.scale(3.0));
 			arrow.setBaseDamage(((dev.rehan.passthrough.mixin.AbstractArrowAccessor) arrow).passthrough$baseDamage() / 3.0);
 		}
 

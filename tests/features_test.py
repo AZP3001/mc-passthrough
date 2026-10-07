@@ -213,6 +213,26 @@ async def main():
         if not (steps and max(steps) > 6.5):
             fails.append(what)
 
+        # no spread: arrow after arrow leaves in exactly the same direction
+        dirs = []
+        for _ in range(4):
+            await ws.send(json.dumps({"t": "cmd", "c": "kill @e[type=arrow]"}))
+            await ws.send(json.dumps({"t": "key", "k": "use", "down": True}))
+            await asyncio.sleep(1.2)
+            inbox.clear()
+            await ws.send(json.dumps({"t": "key", "k": "use", "down": False}))
+            await asyncio.sleep(0.3)
+            track = [p for j in list(inbox) if j.get("t") == "proj" for p in j.get("p", []) if p[1] == "arrow"]
+            if len(track) >= 2 and track[0][0] == track[1][0]:
+                d = [b - a for a, b in zip(track[0][2:5], track[1][2:5])]
+                n = math.hypot(*d)
+                dirs.append([c / n for c in d])
+        spread = max((math.degrees(math.acos(max(-1.0, min(1.0, sum(a * b for a, b in zip(dirs[0], d)))))) for d in dirs), default=99)
+        what = f"a bow shoots dead straight, no spread ({len(dirs)} arrows, widest {spread:.3f} degrees)"
+        note("OK:" if len(dirs) >= 3 and spread < 0.05 else "FAIL:", what)
+        if not (len(dirs) >= 3 and spread < 0.05):
+            fails.append(what)
+
         # Straight: a bow's arrow flies without gravity
         await ws.send(json.dumps({"t": "cmd", "c": "kill @e[type=arrow]"}))
         await ws.send(json.dumps({"t": "cmd", "c": 'item replace entity @a weapon.mainhand with minecraft:bow[enchantments={"passthrough:straight":1}]'}))

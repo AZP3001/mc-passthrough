@@ -928,6 +928,22 @@ int main()
 		for (int i = 0; i < 30; ++i)
 			frame();
 		const float zoomed = g_camFov;
+		// the wheel up while Ctrl is held: further in (the hotbar stays); down: back out
+		g_out.clear();
+		for (int n = 0; n < 3; ++n)
+		{
+			g_justPressed = {15};
+			frame();
+		}
+		for (int i = 0; i < 30; ++i)
+			frame();
+		const float closer = g_camFov;
+		g_justPressed = {14};
+		frame();
+		for (int i = 0; i < 30; ++i)
+			frame();
+		check(closer < zoomed * 0.55f && g_camFov > closer * 1.2f && count_out("\"scroll\"") == 0,
+			"the mouse wheel zooms in and out while Ctrl is held (Minecraft's hotbar doesn't scroll)");
 		g_pressed = {};
 		for (int i = 0; i < 30; ++i)
 			frame();
