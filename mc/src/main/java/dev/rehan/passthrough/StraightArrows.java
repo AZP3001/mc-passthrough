@@ -39,7 +39,15 @@ public final class StraightArrows {
 			return;
 		}
 
+		// a player's arrows leave the bow (or crossbow) 3x as fast, still as fast as it was drawn; as much damage as before
+		// (Minecraft's goes with speed). Only when just shot, not when its chunk loads again
 		ItemStack bow = arrow.getWeaponItem();
+		if (arrow.tickCount == 0 && arrow.getOwner() instanceof net.minecraft.world.entity.player.Player
+			&& bow != null && (bow.is(Items.BOW) || bow.is(Items.CROSSBOW))) {
+			arrow.setDeltaMovement(arrow.getDeltaMovement().scale(3.0));
+			arrow.setBaseDamage(((dev.rehan.passthrough.mixin.AbstractArrowAccessor) arrow).passthrough$baseDamage() / 3.0);
+		}
+
 		if (bow == null || !bow.is(Items.BOW) || !has(bow)) {
 			return;
 		}

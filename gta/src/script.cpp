@@ -1697,15 +1697,20 @@ namespace
 				Vector3 onAt = {};
 				int handles[256];
 				const int n = worldGetAllPeds(handles, 256);
+				// (someone in a car: GTA's line meets the car, never them. Past its side, window or bonnet, up to 3 m on, it's them)
+				const Entity hitCar = hit && entity != 0 && natives::GetEntityType(entity) == 2 ? entity : 0;
 				for (int i = 0; i < n; ++i)
 				{
 					const Ped q = handles[i];
-					if (q == ped || Entity(q) == ignore || g_doublePeds.count(q) || natives::IsPedInAnyVehicle(q, FALSE))
+					if (q == ped || Entity(q) == ignore || g_doublePeds.count(q))
+						continue;
+					const Entity car = natives::IsPedInAnyVehicle(q, FALSE) ? Entity(natives::GetVehiclePedIsIn(q, FALSE)) : 0;
+					if (car != 0 && car == ignore)
 						continue;
 					const Vector3 o = natives::GetEntityCoords(q, TRUE);
 					const float px = o.x - sx0, py = o.y - sy0, pz = o.z - sz0;
 					const float t = px * ux + py * uy + pz * uz;
-					if (t < 0.0f || t > limit)
+					if (t < 0.0f || t > limit + (car != 0 && car == hitCar ? 3.0f : 0.0f))
 						continue;
 					const float lx = px - ux * t, ly = py - uy * t, lz = (pz - uz * t) * 0.5f; // (a person is tall: up and down counts less)
 					const float off = std::sqrt(lx * lx + ly * ly + lz * lz);
@@ -1718,6 +1723,10 @@ namespace
 				}
 				if (on != 0)
 				{
+					// through the window on the way in: it breaks
+					if (hitCar != 0 && natives::IsPedInAnyVehicle(on, FALSE) && Entity(natives::GetVehiclePedIsIn(on, FALSE)) == hitCar &&
+						(pr.kind == "arrow" || pr.kind == "trident") && nearest_window(hitCar, end.x, end.y, end.z, 0.35f) >= 0)
+						break_glass(ped, end, ux, uy, uz, hitCar);
 					hit = TRUE;
 					entity = on;
 					end = onAt;
@@ -7062,8 +7071,8 @@ namespace
 					else if (roll < 90)
 					{
 						// angry: honks and drives on, fast
-						natives::StartVehicleHorn(v, 1500);
-						natives::TaskVehicleDriveWander(driver, v, 30.0f, 786469);
+						natives::StartVehicleHorn(v, 2500);
+						natives::TaskVehicleDriveWander(driver, v, 40.0f, 1074528293 /* rushed */);
 					}
 					else
 					{

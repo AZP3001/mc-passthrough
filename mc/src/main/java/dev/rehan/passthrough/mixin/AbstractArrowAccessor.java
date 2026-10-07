@@ -19,6 +19,9 @@ public interface AbstractArrowAccessor {
 	@Invoker("getHitGroundSoundEvent")
 	SoundEvent passthrough$hitSound();
 
+	@Accessor("baseDamage")
+	double passthrough$baseDamage();
+
 	@Accessor("lastState")
 	void passthrough$setLastState(BlockState state);
 }

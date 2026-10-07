@@ -3,6 +3,7 @@ into the host's, commands reaching the host (/kill @e, /time, /weather, /clearal
 the host's fires, the spectator flag, the HUD values, the host's water. Prints OK/FAIL lines and a summary."""
 import asyncio
 import json
+import math
 import time
 
 import websockets
@@ -195,6 +196,22 @@ async def main():
         await expect(inbox, lambda j: j.get("t") == "gtacmd" and j.get("c") == "range" and abs(j.get("r", 0) - 200) < 0.01, 5,
                      "/range 200 is taken (over Minecraft's 64)")
         await ws.send(json.dumps({"t": "cmd", "c": "range 8", "chat": True}))
+
+        # a fully drawn bow's arrow leaves 3x as fast as Minecraft's (about 9 blocks a tick, Minecraft's 3)
+        await ws.send(json.dumps({"t": "cmd", "c": "kill @e[type=arrow]"}))
+        await ws.send(json.dumps({"t": "cmd", "c": "item replace entity @a weapon.mainhand with minecraft:bow"}))
+        await asyncio.sleep(0.5)
+        await ws.send(json.dumps({"t": "key", "k": "use", "down": True}))
+        await asyncio.sleep(1.2)
+        inbox.clear()
+        await ws.send(json.dumps({"t": "key", "k": "use", "down": False}))
+        await asyncio.sleep(0.4)
+        track = [p for j in list(inbox) if j.get("t") == "proj" for p in j.get("p", []) if p[1] == "arrow"]
+        steps = [math.dist(a[2:5], b[2:5]) for a, b in zip(track, track[1:]) if a[0] == b[0]]
+        what = f"a fully drawn bow's arrow flies 3x as fast (fastest step {max(steps) if steps else 0:.2f}, {len(track)} positions)"
+        note("OK:" if steps and max(steps) > 6.5 else "FAIL:", what)
+        if not (steps and max(steps) > 6.5):
+            fails.append(what)
 
         # Straight: a bow's arrow flies without gravity
         await ws.send(json.dumps({"t": "cmd", "c": "kill @e[type=arrow]"}))

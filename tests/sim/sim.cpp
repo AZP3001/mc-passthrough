@@ -279,6 +279,8 @@ PUINT64 nativeCall()
 		g_calls.push_back("Sit:" + std::to_string(I(0)));
 	else if (npc != g_npcs.end() && h == H_IsPedInAnyVehicle)
 		retI(npc->second.inCar);
+	else if (npc != g_npcs.end() && h == H_GetVehiclePedIsIn)
+		retI(npc->second.inCar ? 71 : 0);
 	else if (npc != g_npcs.end() && h == H_ClearPedTasksImmediately)
 	{
 		npc->second.inCar = false;
@@ -1127,6 +1129,29 @@ int main()
 			head ? "an arrow in the head of someone 60 m off kills" : "an arrow in someone 60 m off: half their health (two hits kill)");
 		g_npcs.erase(who);
 		g_types.erase(who);
+	}
+
+	// an arrow at someone sitting in a car 20 m off: GTA's line meets the car; the one inside is hit all the same
+	{
+		const float chest = g_sped.z + 0.4f, cy = g_sped.y + 20.0f;
+		g_world.push_back({g_sped.x - 1.0f, cy - 2.3f, g_sped.z - 1.0f, g_sped.x + 1.0f, cy + 2.3f, g_sped.z + 0.5f, 71});
+		g_types[71] = 2;
+		g_npcs[84] = SimNpc{g_sped.x, cy + 0.6f, chest - 0.2f};
+		g_npcs[84].inCar = true;
+		g_types[84] = 1;
+		g_calls.clear();
+		char m[200];
+		snprintf(m, sizeof(m), "{\"t\":\"proj\",\"p\":[[990,\"arrow\",%.3f,%.3f,%.3f]]}", g_sped.x, chest + g_yOffset, -(g_sped.y + 1.0));
+		g_in.push_back(m);
+		frame();
+		snprintf(m, sizeof(m), "{\"t\":\"proj\",\"p\":[[990,\"arrow\",%.3f,%.3f,%.3f]]}", g_sped.x, chest + g_yOffset, -(g_sped.y + 30.0));
+		g_in.push_back(m);
+		frame();
+		check(std::find(g_calls.begin(), g_calls.end(), std::string("Dmg:84:51")) != g_calls.end(), "an arrow at someone in a car hits them, not the car");
+		g_npcs.erase(84);
+		g_types.erase(84);
+		g_types.erase(71);
+		g_world.pop_back();
 	}
 
 	// ---- a lead ----

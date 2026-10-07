@@ -1,5 +1,17 @@
 # Changelog
 
+## Steve 85%, faster arrows, arrows into cars (2026-10-07)
+
+Tested in the GTA simulator (new check for arrows into cars) and in Minecraft (`features_test.py`, new arrow speed check,
+all passing). Not yet tried in real GTA.
+
+| Change | Now |
+|---|---|
+| Steve 15% smaller | Drawn at 85% of the GTA character's height (was 70%). The hitbox is unchanged |
+| Faster arrows | A player's bow and crossbow arrows leave 3x as fast, still scaled by how far the bow was drawn. Damage in Minecraft stays the same |
+| Arrows at people in cars | GTA's line meets the car, never the one inside, so the arrow hit the car or nothing. Whoever sits on the arrow's path, up to 3 m past where it met the car, is hit now, and a window on the way breaks |
+| Angry drivers | Drivers who drive off angry from a drawn bow now floor it (honk longer, run lights), so you can tell they reacted |
+
 ## Range, bow, lava, water, zoom (2026-10-06)
 
 Tested in the GTA simulator (all checks, new ones for each row marked *) and in Minecraft (`fall_test.py`,
