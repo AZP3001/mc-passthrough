@@ -178,7 +178,7 @@ FORCE=1 ./gta/install.sh
 | Space | Minecraft's jump; flying: go up. **Hold** it at a ledge too high to jump and GTA climbs it |
 | Space twice | in the air with an elytra on: glide. In a car (driver's seat, after `/fly`): the car flies with you; twice again to drive |
 | mouse | look all the way up and down (Minecraft movement) |
-| hold Ctrl | zoom in, like OptiFine's zoom (Minecraft movement) |
+| hold Ctrl | zoom in, like OptiFine's zoom; the mouse wheel zooms closer or further (Minecraft movement) |
 | V | first person / third person (near, middle, far) |
 | left mouse | attack: break blocks, swing what you hold |
 | right mouse | use: place blocks, pour water, shoot, throw pearls and potions, eat |
