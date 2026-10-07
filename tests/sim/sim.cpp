@@ -59,6 +59,12 @@ struct Box
 	int entity; // 0 map
 };
 std::vector<Box> g_world;
+// a slope: its surface z = z0 + k * (y - y0) over x0..x1, y0..y1, solid underneath (GTA's hills and ramps)
+struct Ramp
+{
+	float x0, y0, x1, y1, z0, k;
+};
+std::vector<Ramp> g_ramps;
 std::map<int, int> g_types = {{1, 1}}; // entity -> type (1 ped, 2 vehicle, 3 object)
 struct SimPed
 {
@@ -67,7 +73,7 @@ struct SimPed
 } g_sped;
 int64_t g_nanos = 1000000000LL;
 int g_ms = 10000, g_frame = 0;
-float g_camHeading = 0, g_camPitch = 0, g_camFov = 0;
+float g_camHeading = 0, g_camPitch = 0, g_camFov = 0, g_camZ = 0;
 bool g_propsLoad = false; // the props for Minecraft's blocks can be made (their model loads)
 bool g_cutscene = false;
 int g_renderingCam = -1; // the camera GTA renders (-1: its gameplay camera)
@@ -187,6 +193,21 @@ Hit ray(float x0, float y0, float z0, float x1, float y1, float z1, int flags, i
 		best.nz = axis == 2 ? sign : 0;
 		best.entity = b.entity;
 	}
+	if (flags & 1)
+		for (const Ramp &r : g_ramps)
+		{
+			// above the surface at the start, under it at the end: where it crosses (from under it, nothing: like GTA)
+			const float f0 = z0 - (r.z0 + r.k * (y0 - r.y0)), f1 = z1 - (r.z0 + r.k * (y1 - r.y0));
+			if (f0 <= 0.0f || f1 > 0.0f)
+				continue;
+			const float t = f0 / (f0 - f1);
+			const float hx = x0 + d[0] * t, hy = y0 + d[1] * t;
+			if (t >= bestT || hx < r.x0 || hx > r.x1 || hy < r.y0 || hy > r.y1)
+				continue;
+			bestT = t;
+			const float nl = std::sqrt(1.0f + r.k * r.k);
+			best = {true, hx, hy, z0 + d[2] * t, 0.0f, -r.k / nl, 1.0f / nl, 0};
+		}
 	return best;
 }
 
@@ -386,6 +407,8 @@ PUINT64 nativeCall()
 		retI(I(0) != 0);
 	else if (h == H_SetCamFov)
 		g_camFov = F(1);
+	else if (h == H_SetCamCoord)
+		g_camZ = F(3);
 	else if (h == H_SetCamRot)
 	{
 		// the free-look camera: what renders (the simulator has one camera for both)
@@ -598,6 +621,9 @@ struct Mc
 	float yaw = 0;
 	double x = 0, y = 0, z = 0;
 	bool placed = false;
+	bool boxes = false; // stands on and is stopped by the host's collision boxes (as Minecraft does), not GTA's floor
+	std::vector<std::array<double, 6>> hc; // the host's boxes, Minecraft coordinates
+	double vy = 0;
 } g_mc;
 
 static double num_after(const std::string &m, const char *key, double fb = 0)
@@ -620,6 +646,28 @@ static void mc_frame()
 			{
 				const size_t pl = m.find("\"pl\":[");
 				sscanf(m.c_str() + pl + 6, "%lf,%lf,%lf", &g_mc.x, &g_mc.y, &g_mc.z);
+			}
+		}
+		else if (m.find("\"t\":\"hc\"") != std::string::npos)
+		{
+			g_mc.hc.clear();
+			const char *c = m.c_str() + m.find("\"b\":[") + 5;
+			std::array<double, 6> b;
+			int n = 0;
+			while (*c && *c != ']')
+			{
+				char *end = nullptr;
+				b[n] = std::strtod(c, &end);
+				if (end == c)
+					break;
+				c = end;
+				if (++n == 6)
+				{
+					g_mc.hc.push_back(b);
+					n = 0;
+				}
+				if (*c == ',')
+					++c;
 			}
 		}
 		else if (m.find("\"t\":\"pset\"") != std::string::npos)
@@ -647,13 +695,55 @@ static void mc_frame()
 		vx = -std::sin(yr) * 4.3;
 		vz = std::cos(yr) * 4.3;
 	}
-	g_mc.x += vx * dt;
-	g_mc.z += vz * dt;
-	const double vy = g_mc.falling ? -10.0 : 0.0;
-	g_mc.y += vy * dt;
+	double vy = g_mc.falling ? -10.0 : 0.0;
+	bool ground = !g_mc.falling;
+	if (g_mc.boxes)
+	{
+		// the highest top under its 0.6 m footprint at most a step (0.6) up: stood on (a step up, or down onto it: the
+		// mod's step-down); one higher in the way: stopped
+		auto top = [&](double x, double z, bool &wall) {
+			double best = -1e9;
+			wall = false;
+			for (const auto &b : g_mc.hc)
+				if (b[0] < x + 0.3 && b[3] > x - 0.3 && b[2] < z + 0.3 && b[5] > z - 0.3 && b[1] < g_mc.y + 1.8)
+				{
+					if (b[4] > g_mc.y + 0.6)
+						wall = true;
+					else
+						best = std::max(best, b[4]);
+				}
+			return best;
+		};
+		bool wall = false;
+		top(g_mc.x + vx * dt, g_mc.z + vz * dt, wall);
+		if (wall)
+			vx = vz = 0.0;
+		g_mc.x += vx * dt;
+		g_mc.z += vz * dt;
+		const double under = top(g_mc.x, g_mc.z, wall);
+		const double y0 = g_mc.y;
+		if (under >= g_mc.y - 0.6)
+		{
+			g_mc.y = under;
+			g_mc.vy = 0;
+		}
+		else
+		{
+			g_mc.vy -= 32.0 * dt;
+			g_mc.y = std::max(under, g_mc.y + g_mc.vy * dt);
+			ground = g_mc.y <= under + 1e-6;
+		}
+		vy = (g_mc.y - y0) / dt;
+	}
+	else
+	{
+		g_mc.x += vx * dt;
+		g_mc.z += vz * dt;
+		g_mc.y += vy * dt;
+	}
 	char buf[256];
 	snprintf(buf, sizeof(buf), "{\"t\":\"mcpos\",\"pos\":[%.4f,%.4f,%.4f],\"vel\":[%.3f,%.3f,%.3f],\"tn\":%lld,\"w\":1,\"ps\":%d,\"g\":%d}", g_mc.x,
-		g_mc.y, g_mc.z, vx, vy, vz, (long long)g_nanos, g_mc.ps, g_mc.falling ? 0 : 1);
+		g_mc.y, g_mc.z, vx, vy, vz, (long long)g_nanos, g_mc.ps, ground ? 1 : 0);
 	g_in.push_back(buf);
 }
 
@@ -1168,6 +1258,105 @@ int main()
 		g_types.erase(84);
 		g_types.erase(71);
 		g_world.pop_back();
+	}
+
+	// ---- a 35 degree hill (GTA's hills, ramps and sloped streets) ----
+	// Minecraft stands on the host's 0.5 m floor cells, a staircase up the slope. Walking up it and down again: Minecraft's
+	// movement stays on, nothing takes the slope for a wall (no corrections, no climb with Space held), and the camera
+	// and Steve's feet go smoothly along GTA's real surface, not up and down the cells' steps
+	{
+		const float k = std::tan(35.0f * 3.14159265f / 180.0f);
+		g_ramps = {{30.0f, -45.0f, 40.0f, -25.0f, 10.4f, k}};
+		auto surface = [&](float y) { return 10.4f + k * (std::clamp(y, -45.0f, -25.0f) + 45.0f); };
+		g_sped.x = 35.0f;
+		g_sped.y = -48.0f;
+		g_sped.z = 11.4f;
+		look(0.0f);
+		for (int i = 0; i < 20; ++i)
+			frame();
+		g_mc.boxes = true;
+		for (int i = 0; i < 5; ++i)
+			frame();
+		for (const bool up : {true, false})
+		{
+			look(up ? 0.0f : 180.0f);
+			g_calls.clear();
+			int psetsSent = 0, off = 0, climbs = 0, n = 0;
+			float maxStep = 0.0f, maxFeet = 0.0f, lastCam = g_camZ, lastSteve = NAN;
+			float maxSteveStep = 0.0f;
+			g_pressed = {32};
+			for (int i = 0; i < 400; ++i)
+			{
+				// (Space held a while on the way up: Minecraft's jump only, never GTA's climb)
+				g_pressed = up && i >= 100 && i < 160 ? std::set<int>{32, 22} : std::set<int>{32};
+				if (up && i == 100)
+					g_justPressed = {22};
+				frame();
+				psetsSent += count_out("\"t\":\"pset\"");
+				off += !g_walk.on;
+				climbs += int(std::count(g_calls.begin(), g_calls.end(), std::string("TaskClimb")));
+				g_calls.clear();
+				float steve = NAN;
+				for (const std::string &m : g_out)
+					if (m.find("\"t\":\"cam\"") != std::string::npos)
+					{
+						const size_t pl = m.find("\"pl\":[");
+						float px, py, pz;
+						if (pl != std::string::npos && sscanf(m.c_str() + pl + 6, "%f,%f,%f", &px, &py, &pz) == 3)
+							steve = py - g_yOffset;
+					}
+				const bool onSlope = g_walk.y > -44.0f && g_walk.y < -26.0f;
+				if (onSlope && i > 5)
+				{
+					++n;
+					maxStep = std::max(maxStep, std::fabs(g_camZ - lastCam));
+					if (!std::isnan(steve))
+					{
+						maxFeet = std::max(maxFeet, std::fabs(steve - surface(g_walk.y)));
+						if (!std::isnan(lastSteve))
+							maxSteveStep = std::max(maxSteveStep, std::fabs(steve - lastSteve));
+					}
+				}
+				lastCam = g_camZ;
+				lastSteve = steve;
+				if ((up && g_walk.y > -27.0f) || (!up && g_walk.y < -47.0f))
+					break;
+			}
+			g_pressed.clear();
+			std::printf("      %s: %d frames on the slope, at %.2f %.2f (Minecraft y %.2f), psets %d, off %d, climbs %d, camera step %.3f, "
+						"Steve step %.3f, feet off GTA's surface %.3f\n",
+				up ? "up" : "down", n, g_walk.y, g_walk.z, g_mc.y, psetsSent, off, climbs, maxStep, maxSteveStep, maxFeet);
+			check(n > 150 && (up ? g_walk.y > -27.5f : g_walk.y < -46.5f), up ? "walks all the way up a 35 degree hill" : "and all the way down");
+			check(off == 0 && climbs == 0, up ? "Minecraft's movement stays on (Space held there: no GTA climb)" : "Minecraft's movement stays on");
+			check(psetsSent == 0, "no corrections on the slope (it isn't a wall)");
+			check(maxStep < 0.09f && maxSteveStep < 0.09f, "the camera and Steve go smoothly along it (no snapping up and down the steps)");
+			check(maxFeet < 0.06f, "Steve's feet on GTA's real surface");
+		}
+		// too steep to walk up (52 degrees): Minecraft is stopped at it, and Space held there is Minecraft's jump, never a
+		// GTA climb (a climb is for a ledge: a wall with a flat top)
+		g_ramps = {{30.0f, -45.0f, 40.0f, -25.0f, 10.4f, std::tan(52.0f * 3.14159265f / 180.0f)}};
+		look(0.0f);
+		g_calls.clear();
+		int steepOff = 0;
+		for (int i = 0; i < 160; ++i)
+		{
+			g_pressed = i >= 40 ? std::set<int>{32, 22} : std::set<int>{32};
+			if (i == 40)
+				g_justPressed = {22};
+			frame();
+			steepOff += !g_walk.on;
+		}
+		g_pressed.clear();
+		std::printf("      steep: at %.2f %.2f, off %d\n", g_walk.y, g_walk.z, steepOff);
+		check(steepOff == 0 && std::find(g_calls.begin(), g_calls.end(), "TaskClimb") == g_calls.end(),
+			"Space held at a hill too steep to walk up: no GTA climb, Minecraft's movement stays on");
+		g_mc.boxes = false;
+		g_ramps.clear();
+		g_sped.x = 0.0f;
+		g_sped.y = 0.0f;
+		g_sped.z = 11.4f;
+		for (int i = 0; i < 10; ++i)
+			frame();
 	}
 
 	// ---- a lead ----

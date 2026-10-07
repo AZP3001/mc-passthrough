@@ -1,5 +1,19 @@
 # Changelog
 
+## Minecraft movement on slopes (2026-10-07)
+
+Tested in the GTA simulator (a new 35 degree hill and a 52 degree one: up, down, Space held; these checks fail on the old
+code) and in Minecraft (`walktest.py` has a new hill made of the host's floor cells: up and down, walking and sprinting;
+`fall_test.py`, `features_test.py`, `water_test.py` all pass). Not yet tried in real GTA.
+
+| Problem | Cause | Now |
+|---|---|---|
+| Snapping up and down on slopes | Minecraft stands on GTA's ground as 0.5 m floor cells, a staircase on a slope. The camera, GTA's player and Steve followed every step | They go along GTA's real surface under the feet, which is smooth. Kerbs, steps, taking off and landing are eased over a few frames |
+| Stuck partway up hills, put back over and over | Anything steeper than 30 degrees counted as a wall | Up to 48 degrees is walkable ground. Minecraft steps up the cells. Steeper is a wall, and Minecraft's jump still gets you up it |
+| Switching to GTA's movement on steep hills | Space held there was taken for a ledge, and GTA climbed it | GTA climbs only real ledges (a wall's face with a flat top) |
+| In the air most of the way down a hill | Minecraft walked off each cell and fell to the next. You couldn't jump, and each fall bumped | Walking off a cell onto one at most a step lower (0.6) steps down onto it, as a step up goes up. Jumps, flight, swimming, ladders and real drops are Minecraft's own |
+| Corrections on the way down | Each step down was taken for a fast fall through a floor and corrected. Minecraft's height on the ground was also carried forward by its speed, overshooting each step | Only a drop of more than a step counts. On the ground, Minecraft's height is used as it is |
+
 ## Steve 85%, faster and exact arrows, arrows into cars, scroll zoom (2026-10-07)
 
 Tested in the GTA simulator (new check for arrows into cars) and in Minecraft (`features_test.py`, new arrow speed check,

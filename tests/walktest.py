@@ -59,7 +59,18 @@ def boxes():
     b += [-4, 63.3, -6.3, 4, FLOOR + 1.0, -6.0]
     # a ceiling 2.2 m over the floor
     b += [-16, FLOOR + 2.2, -3, -10, FLOOR + 3.2, 3]
+    if S.get("slope"):
+        # a 35 degree hill as the host sends one: 0.5 m floor cells (a staircase), rising toward +z from z -10 to 0, then
+        # level to z 8
+        for i in range(6):
+            for j in range(44):
+                x0, z0 = -1.0 + i * 0.5, -14.0 + j * 0.5
+                top = FLOOR + SLOPE_K * min(10.0, max(0.0, z0 + 0.25 + 10.0))
+                b += [x0, top - 1.2, z0, x0 + 0.5, top, z0 + 0.5]
     return b
+
+
+SLOPE_K = math.tan(math.radians(35))
 
 
 async def cam_loop(ws):
@@ -326,6 +337,40 @@ async def main():
         await asyncio.sleep(0.3)
         await ws.send(json.dumps({"t": "cmd", "c": "item replace entity @a armor.chest with minecraft:air"}))
         await expect(inbox, lambda j: j.get("t") == "pstate" and j.get("ely") == 0, 4, "taking it off is told too")
+
+        # --- a 35 degree hill (the host's floor cells, a staircase): up it and down again on the ground all the way
+        # (Minecraft steps up the cells; going down, it steps down them instead of falling off each one)
+        S["slope"] = True
+        await ws.send(json.dumps({"t": "hc", "b": boxes()}))
+        await asyncio.sleep(0.3)
+        await pset(ws, 0.25, FLOOR, -13.0)
+        await asyncio.sleep(0.6)
+        for label, yaw, keys, secs in (("up", 0.0, 1, 2.2), ("down", 180.0, 1, 2.2), ("up sprinting", 0.0, 1 | 64, 1.8),
+                                       ("down sprinting", 180.0, 1 | 64, 1.8)):
+            S.update(yaw=yaw, **{"in": keys})
+            t0 = time.time()
+            await asyncio.sleep(secs)
+            S["in"] = 0
+            await asyncio.sleep(0.4)
+            on = [p for p in since(t0) if -9.4 < p[3] < -0.6]
+            air = sum(1 for p in on if p[5] == 0)
+            z = S["mc"]["pos"][2]
+            far = z > -1.0 if yaw == 0.0 else z < -10.5
+            check(len(on) > 10 and air == 0 and far,
+                  f"{label} the hill: on the ground all the way ({air} of {len(on)} samples in the air), got to z {z:.2f}")
+        # a jump on the hill: Minecraft's own
+        await pset(ws, 0.25, FLOOR + SLOPE_K * 5.0, -5.0)
+        await asyncio.sleep(0.5)
+        t0 = time.time()
+        y0 = S["mc"]["pos"][1]
+        S["in"] = 16
+        await asyncio.sleep(0.12)
+        S["in"] = 0
+        await asyncio.sleep(1.0)
+        top = max((p[2] for p in since(t0)), default=0)
+        check(abs(top - y0 - 1.2522) < 0.08, f"jumps on the hill as ever: peak {top - y0:.3f}")
+        S["slope"] = False
+        await ws.send(json.dumps({"t": "hc", "b": boxes()}))
 
         # --- dead pose and the HUD hidden (no crash), then back to the host moving the player
         S["dead"] = True

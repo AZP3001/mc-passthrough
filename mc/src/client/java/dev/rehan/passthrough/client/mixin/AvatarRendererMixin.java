@@ -3,6 +3,7 @@ package dev.rehan.passthrough.client.mixin;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import dev.rehan.passthrough.client.HostState;
+import dev.rehan.passthrough.client.PlayerSync;
 import dev.rehan.passthrough.client.SteveRig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.HumanoidModel;
@@ -33,6 +34,12 @@ abstract class AvatarRendererMixin {
 		// drawn 85% as tall as the host's character (Minecraft's Steve is 1.875 m; his hitbox stays). (First person: he
 		// isn't drawn at all; the inventory's little Steve is this same player, and must keep his head)
 		SteveRig.setLocal(state, p.height() / 1.875F * 0.85F);
+		// while Minecraft moves him: at the height the host draws him at (its camera goes by it too), on the host's real
+		// ground. Minecraft's own is on the host's 0.5 m floor cells, a staircase on a slope: he went up and down it in
+		// steps. (Never far from his own: it's a smoothing, not a move)
+		if (p.walk() && !p.drive() && PlayerSync.walking() && Math.abs(p.py() - state.y) < 0.8) {
+			state.y = p.py();
+		}
 
 		// (not while a screen that draws Steve itself is open, the inventory: its little Steve would take the pose too)
 		SteveRig.Pose rig = p.rig() != null && p.rig().length >= 24 && !p.walk() && !p.drive()

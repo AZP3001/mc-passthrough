@@ -79,6 +79,11 @@ namespace
 		int nextVoidCheck = 0, voidSince = 0; // fallen out of GTA's world (nothing under, its ground overhead): since when
 		float safeX = 0, safeY = 0, safeZ = 0; // the last place it stood (where it goes back to if no ground is found)
 		bool haveSafe = false;
+		// The height the player is drawn at (Steve, the camera, GTA's player): on GTA's ground its real surface under the
+		// feet, else Minecraft's (walk_tick). visEase: what's left of a step or a switch between the two, eased out
+		float visZ = 0, visTarget = 0, visEase = 0, visX = 0, visY = 0;
+		bool haveVis = false, visSurface = false;
+		int64_t visAt = 0;
 	} g_walk;
 	// Cutscenes, character switches, loading screens, fades, warnings and missions taking control: Minecraft gets no
 	// input (a click forwarded mid-cutscene could hit someone the mission needs), and Minecraft's swings, arrows, mob
@@ -166,6 +171,11 @@ namespace
 		bool dirty = false;
 	} g_proxy;
 	constexpr float kCell = 0.5f;   // floor cell size (m)
+	// A surface whose normal leans out more than this (sideways part of it) is a wall; anything gentler, a slope up to
+	// 48 degrees, is ground: the floor cells have it, and Minecraft steps up their 0.5 m cells (at most 0.56 m each, under
+	// its 0.6). (It was 30 degrees: GTA's hills, ramps and steep streets were walls, Minecraft was stopped and put back on
+	// them over and over, and Space held there had GTA climb them)
+	constexpr float kWallLean = 0.74f;
 	constexpr int kCellRadius = 6;  // cells each way around the player
 	int g_lastSpace = -100000;      // Space twice quickly opens the elytra (GTA's movement, elytra worn)
 	bool g_mcElytra = false;        // Minecraft: the player wears an elytra
@@ -5090,7 +5100,7 @@ namespace
 	{
 		float nx = n.x, ny = n.y;
 		const float nl = std::sqrt(nx * nx + ny * ny);
-		if (nl < 0.5f)
+		if (nl < kWallLean)
 			return; // a slope or a step's top, not a wall (the floor cells have it)
 		nx /= nl;
 		ny /= nl;
@@ -5134,7 +5144,7 @@ namespace
 	void wall_join(Ped ped, const Vector3 &a, const Vector3 &na, const Vector3 &b, const Vector3 &nb, float z, int now)
 	{
 		const float la = std::sqrt(na.x * na.x + na.y * na.y), lb = std::sqrt(nb.x * nb.x + nb.y * nb.y);
-		if (la < 0.5f || lb < 0.5f || (na.x * nb.x + na.y * nb.y) / (la * lb) < 0.85f || std::fabs(a.z - b.z) > 0.6f)
+		if (la < kWallLean || lb < kWallLean || (na.x * nb.x + na.y * nb.y) / (la * lb) < 0.85f || std::fabs(a.z - b.z) > 0.6f)
 			return;
 		const float dx = b.x - a.x, dy = b.y - a.y, gap = std::sqrt(dx * dx + dy * dy);
 		if (gap < 0.2f || gap > 1.6f)
@@ -5371,6 +5381,8 @@ namespace
 		g_walk.putY = p.y;
 		g_walk.putZ = p.z;
 		g_walk.ground = true;
+		g_walk.visZ = g_walk.z;
+		g_walk.haveVis = false;
 		g_drive.havePos = false;
 		g_drive.vel = {};
 		natives::FreezeEntityPosition(ped, TRUE);
@@ -5516,10 +5528,11 @@ namespace
 		// measured from where the player last stood (Minecraft's jumps go on while Space is held)
 		const float x = g_walk.x, y = g_walk.y, z = g_walk.standZ;
 		Vector3 wall = {}, n = {}, top = {}, room = {};
-		if (!solid_probe(ped, x, y, z + 1.1f, x + fx * 1.0f, y + fy * 1.0f, z + 1.1f, wall, n))
+		// (a wall's face, and a flat top: a hill or a ramp is walked up, never climbed)
+		if (!solid_probe(ped, x, y, z + 1.1f, x + fx * 1.0f, y + fy * 1.0f, z + 1.1f, wall, n) || n.x * n.x + n.y * n.y < kWallLean * kWallLean)
 			return false;
 		const float tx = wall.x + fx * 0.3f, ty = wall.y + fy * 0.3f;
-		if (!solid_probe(ped, tx, ty, z + 3.3f, tx, ty, z + 0.5f, top, n))
+		if (!solid_probe(ped, tx, ty, z + 3.3f, tx, ty, z + 0.5f, top, n) || n.z < 0.8f)
 			return false;
 		const float rise = top.z - z;
 		if (rise < 1.3f || rise > 3.1f || solid_probe(ped, tx, ty, top.z + 0.1f, tx, ty, top.z + 1.0f, room, n))
@@ -5577,7 +5590,7 @@ namespace
 			Vector3 at = {}, n = {};
 			// (the player is 0.6 m wide: look 0.3 m past where it got to)
 			if (!solid_probe(ped, g_walk.x, g_walk.y, g_walk.z + h, tx + ux * 0.3f, ty + uy * 0.3f, tz + h, at, n) ||
-				n.x * n.x + n.y * n.y < 0.25f)
+				n.x * n.x + n.y * n.y < kWallLean * kWallLean)
 				continue; // nothing, or a slope or a step (Minecraft's step-up has those)
 			wall_add(ped, at, n, g_walk.z, natives::GetGameTimer());
 			const float along = std::max(0.0f, (at.x - g_walk.x) * ux + (at.y - g_walk.y) * uy - 0.32f);
@@ -5652,10 +5665,10 @@ namespace
 		{
 			holdUntil = 0;
 			natives::FreezeEntityPosition(ped, TRUE); // (collected, or gone: frozen again where Minecraft's player is)
-			walk_put(ped, g_walk.x, g_walk.y, g_walk.z + 1.0f);
+			walk_put(ped, g_walk.x, g_walk.y, g_walk.visZ + 1.0f);
 		}
 		else if (holdUntil != 0)
-			walk_put(ped, g_walk.x, g_walk.y, g_walk.z + 1.0f);
+			walk_put(ped, g_walk.x, g_walk.y, g_walk.visZ + 1.0f);
 	}
 
 	/// A mission restarted (failed and retried) or back at a checkpoint (the player died or was arrested in it): Minecraft
@@ -5748,8 +5761,10 @@ namespace
 			// wall Minecraft stopped it at, GTA's side would see it go through and pull it back)
 			const int64_t nowNs = now_nanos();
 			const float dt = std::clamp(float(nowNs - g_drive.posNanos) * 1e-9f, 0.0f, 0.08f);
+			// (not up and down on the ground: there Minecraft's height goes in steps, up and down the floor cells, and
+			// its speed up or down for a tick is a step's worth: carried on, it overshot every step)
 			float tx = g_drive.pos.x + g_drive.vel.x * dt, ty = g_drive.pos.y + g_drive.vel.y * dt;
-			float tz = g_drive.pos.z + g_drive.vel.z * dt;
+			float tz = g_drive.pos.z + (g_walk.ground ? 0.0f : g_drive.vel.z * dt);
 			{
 				const float fdt = std::clamp(float(nowNs - g_walk.estAt) * 1e-9f, 0.0f, 0.1f);
 				g_walk.estAt = nowNs;
@@ -5815,8 +5830,10 @@ namespace
 				}
 				// falling fast onto a floor: stopped on it (Minecraft's collision for it can come too late at a riptide's or
 				// a long fall's speed, and the player went through, wherever it had stood before)
+				// (on the ground, only a drop of more than a step: Minecraft steps down a slope's floor cells a step at a
+				// time, at a step's speed, and each step was taken for a fall onto the slope and corrected)
 				bool landed = false;
-				if (!g_mcSpectator && !g_mcFlying && g_drive.vel.z < -5.0f && tz < g_walk.z - 0.1f && jump < 40.0f)
+				if (!g_mcSpectator && !g_mcFlying && g_drive.vel.z < -5.0f && tz < g_walk.z - (g_walk.ground ? 0.7f : 0.1f) && jump < 40.0f)
 				{
 					Vector3 at = {}, n = {};
 					float wt = 0.0f;
@@ -5948,7 +5965,41 @@ namespace
 				return 0;
 			}
 		}
-		walk_put(ped, g_walk.x, g_walk.y, g_walk.z + 1.0f);
+		// The height the player is drawn at: Minecraft stands on the host's 0.5 m floor cells, so on a slope it goes up and
+		// down a staircase, a step every few strides (and the camera with it, GTA's player and Steve: the slope's
+		// snapping). On GTA's ground it's drawn on GTA's real surface under its feet instead, which is smooth; in the air,
+		// swimming, flying or on Minecraft's blocks at Minecraft's own height. A kerb, a step or a switch between the two
+		// (taking off, landing) is eased over a few frames, never jumped.
+		{
+			const int64_t nowNs = now_nanos();
+			const float dt = std::clamp(float(nowNs - g_walk.visAt) * 1e-9f, 0.0f, 0.1f);
+			g_walk.visAt = nowNs;
+			float target = g_walk.z;
+			bool surface = false;
+			if (g_walk.ground && !g_mcFlying && !g_mcSpectator && !inWater)
+			{
+				Vector3 at = {}, n = {};
+				if (solid_probe(ped, g_walk.x, g_walk.y, g_walk.z + 0.6f, g_walk.x, g_walk.y, g_walk.z - 0.6f, at, n) && n.z > 0.6f)
+				{
+					target = at.z;
+					surface = true;
+				}
+			}
+			const float jump = target - g_walk.visTarget;
+			const float moved = std::sqrt((g_walk.x - g_walk.visX) * (g_walk.x - g_walk.visX) + (g_walk.y - g_walk.visY) * (g_walk.y - g_walk.visY));
+			if (!g_walk.haveVis || std::fabs(jump) > 1.5f)
+				g_walk.visEase = 0.0f; // (put somewhere else: there at once)
+			else if (surface != g_walk.visSurface || (g_walk.ground && std::fabs(jump) > 0.03f + 1.2f * moved))
+				g_walk.visEase = std::clamp(g_walk.visEase - jump, -0.7f, 0.7f); // (steeper than any slope: a step)
+			g_walk.visEase *= std::exp(-dt * 14.0f);
+			g_walk.visZ = target + g_walk.visEase;
+			g_walk.visTarget = target;
+			g_walk.visSurface = surface;
+			g_walk.visX = g_walk.x;
+			g_walk.visY = g_walk.y;
+			g_walk.haveVis = true;
+		}
+		walk_put(ped, g_walk.x, g_walk.y, g_walk.visZ + 1.0f);
 		natives::SetEntityHeading(ped, cam.z);
 		natives::SetPedDiesInWater(ped, FALSE); // (Minecraft swims, and keeps its own breath)
 		// standing still on GTA's own ground: GTA's player isn't held frozen, only put where Minecraft's is (a mission's
@@ -5956,7 +6007,7 @@ namespace
 		{
 			float under = 0.0f;
 			const bool still = (in & 15) == 0 && g_walk.ground && !g_mcFlying && !g_mcSpectator &&
-				natives::GetGroundZFor3dCoord(g_walk.x, g_walk.y, g_walk.z + 0.5f, &under, FALSE, FALSE) && std::fabs(under - g_walk.z) < 0.3f;
+				natives::GetGroundZFor3dCoord(g_walk.x, g_walk.y, g_walk.z + 0.5f, &under, FALSE, FALSE) && std::fabs(under - g_walk.visZ) < 0.3f;
 			natives::FreezeEntityPosition(ped, still ? FALSE : TRUE);
 		}
 		pickups_tick(ped, now);
@@ -5966,7 +6017,7 @@ namespace
 		// blocks, or in the air, GTA's movement would drop the player)
 		float underZ = 0.0f;
 		if (g_walk.ground && !g_mcFlying && natives::GetGroundZFor3dCoord(g_walk.x, g_walk.y, g_walk.z + 0.5f, &underZ, FALSE, FALSE) &&
-			std::fabs(underZ - g_walk.z) < 0.35f && car_coming(g_walk.x, g_walk.y, g_walk.z + 1.0f))
+			std::fabs(underZ - g_walk.visZ) < 0.35f && car_coming(g_walk.x, g_walk.y, g_walk.z + 1.0f))
 		{
 			walk_set(ped, false);
 			g_walk.gtaUntil = now + 1500;
@@ -8340,7 +8391,7 @@ namespace
 		}
 		const float d2r = 3.14159265f / 180.0f, h = g_walkCam.heading * d2r, pt = g_walkCam.pitch * d2r;
 		const float fx = -std::sin(h) * std::cos(pt), fy = std::cos(h) * std::cos(pt), fz = std::sin(pt);
-		const float ex = g_walk.x, ey = g_walk.y, ez = g_walk.z + 1.62f; // Steve's eyes
+		const float ex = g_walk.x, ey = g_walk.y, ez = (g_walk.on ? g_walk.visZ : g_walk.z) + 1.62f; // Steve's eyes (as drawn)
 		float cx = ex, cy = ey, cz = ez;
 		if (g_walkCam.mode != 4)
 		{
@@ -8956,7 +9007,7 @@ namespace
 			{
 				sx = g_walk.x;
 				sy = g_walk.y;
-				sz = g_walk.z;
+				sz = g_walk.on ? g_walk.visZ : g_walk.z; // (where Steve is drawn: Minecraft draws him at this height)
 			}
 			char rigJson[400] = "";
 			if (rigOn)
